@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
-import { Heart, Plus, Sparkles, Sun, CloudRain, Wind, Search, SlidersHorizontal, Shirt, CalendarDays, UserRound, LayoutGrid, X, ChevronDown, RefreshCw, Check, ArrowUpRight, CloudSun, Upload, Trash2, Menu } from 'lucide-react'
+import { Heart, Plus, Sparkles, Sun, CloudRain, Wind, Search, SlidersHorizontal, Shirt, CalendarDays, UserRound, LayoutGrid, X, ChevronDown, RefreshCw, Check, ArrowUpRight, CloudSun, Upload, Trash2, Menu, Camera, LoaderCircle, ImageUp } from 'lucide-react'
 import './styles.css'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -41,11 +41,20 @@ function App() {
   const [showLogin, setShowLogin] = useState(false)
   const [loginEmail, setLoginEmail] = useState('')
   const [cloudMode, setCloudMode] = useState(false)
+  const [showTryOn, setShowTryOn] = useState(false)
+  const [tryOnItemId, setTryOnItemId] = useState('')
+  const [tryOnPhoto, setTryOnPhoto] = useState('')
+  const [tryOnResult, setTryOnResult] = useState('')
+  const [tryOnBusy, setTryOnBusy] = useState(false)
+  const [tryOnError, setTryOnError] = useState('')
+  const [tryOnConsent, setTryOnConsent] = useState(false)
   const filtered = useMemo(() => items.filter(x => (category === 'Todo' || x.category === category) && `${x.name} ${x.color} ${x.brand}`.toLowerCase().includes(query.toLowerCase())), [items, category, query])
   const outfitSets = [
     [1, 2, 3, 5], [4, 2, 6, 8], [1, 2, 6, 5],
   ]
   const currentOutfit = (outfitSets[outfitIndex % outfitSets.length]).map(id => items.find(x => x.id === id)).filter(Boolean)
+  const tryOnItems = items.filter(item => item.category === 'Prendas')
+  const tryOnItem = tryOnItems.find(item => String(item.id) === String(tryOnItemId)) || tryOnItems[0]
   const visibleItems = showAll ? filtered : filtered.slice(0, 4)
 
   useEffect(() => {
@@ -111,6 +120,47 @@ function App() {
     if (supabase && session?.user && typeof id === 'string') await supabase.from('wardrobe_items').delete().eq('id', id).eq('user_id', session.user.id)
   }
 
+  const compressPhoto = (file, maxSide = 1296) => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('No se pudo leer la foto.'))
+    reader.onload = () => {
+      const image = new Image()
+      image.onerror = () => reject(new Error('El archivo no parece ser una imagen válida.'))
+      image.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale)
+        canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height)
+        resolve(canvas.toDataURL('image/jpeg', .84))
+      }
+      image.src = reader.result
+    }
+    reader.readAsDataURL(file)
+  })
+
+  const generateTryOn = async () => {
+    setTryOnError(''); setTryOnResult('')
+    if (!supabase || !session?.user) { setTryOnError('Conecta tu cuenta de Supabase desde el perfil para usar la prueba virtual.'); return }
+    if (!tryOnPhoto || !tryOnItem) { setTryOnError('Sube tu foto y elige una prenda del armario.'); return }
+    if (!tryOnConsent) { setTryOnError('Confirma que tienes permiso para usar esta foto.'); return }
+    setTryOnBusy(true)
+    try {
+      let garmentImage = tryOnItem.image
+      if (garmentImage.startsWith('blob:') || garmentImage.startsWith('data:')) {
+        const response = await fetch(garmentImage); const file = await response.blob()
+        garmentImage = await compressPhoto(new File([file], 'prenda.jpg', { type: file.type || 'image/jpeg' }), 1296)
+      }
+      const { data, error } = await supabase.functions.invoke('virtual-try-on', { body: { modelImage: tryOnPhoto, garmentImage, category: 'auto' } })
+      if (error) throw new Error(error.message || 'No se ha podido generar la prueba virtual.')
+      if (!data?.image) throw new Error(data?.error || 'No se ha recibido una imagen de resultado.')
+      setTryOnResult(data.image)
+    } catch (error) {
+      let message = error?.message || 'No se ha podido generar el resultado.'
+      try { const body = typeof error?.context?.json === 'function' ? await error.context.json() : error?.context?.json; if (body?.error) message = body.error } catch {}
+      setTryOnError(message.includes('FunctionsFetchError') || message.includes('Failed to fetch') ? 'No está publicada la función de prueba virtual o falta su clave de proveedor.' : message)
+    } finally { setTryOnBusy(false) }
+  }
+
   const makeLook = () => { setOutfitIndex(i => i + 1); setLiked(false) }
 
   const nav = <>
@@ -136,13 +186,14 @@ function App() {
             <div className="look-result"><div className="result-top"><span className="result-label"><span className="live-dot"/> TU LOOK DE HOY</span><button className={`heart-btn ${liked?'liked':''}`} onClick={()=>setLiked(!liked)} aria-label="Guardar look"><Heart size={19} fill={liked?'currentColor':'none'}/></button></div><div className="outfit-images">{currentOutfit.slice(0,3).map((item,i)=><div className={`outfit-image outfit-image-${i}`} key={item.id}><img src={photoSrc(item.image)} alt={item.name}/><span>{item.name}</span></div>)}</div><div className="outfit-copy"><div><h3>Un brunch con encanto</h3><p>{occasion} · {vibe || 'A tu estilo'}</p></div><button className="text-action" onClick={makeLook}>Otro look <RefreshCw size={15}/></button></div><div className="look-tip"><Sparkles size={14}/><span>El blazer arena le da ese punto especial al vaquero. Las bailarinas te llevan a cualquier parte.</span></div></div>
           </div>
         </section>
-        <section className="wardrobe-section"><div className="wardrobe-heading"><div><div className="eyebrow blush">TUS FAVORITOS, JUNTITOS</div><h2>Mi armario <span className="item-total">{items.length}</span></h2></div><button className="outline-button" onClick={()=>setShowAdd(true)}><Plus size={17}/> Añadir prenda</button></div><div className="wardrobe-toolbar"><div className="category-tabs">{categories.map(c=><button key={c} className={category===c?'current':''} onClick={()=>{setCategory(c);setShowAll(false)}}>{c}</button>)}</div><div className="toolbar-actions"><label className="search-box"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar en mi armario"/></label><button className="filter-btn"><SlidersHorizontal size={16}/><span>Filtrar</span></button></div></div><div className="item-grid">{visibleItems.map(item=><article className="wardrobe-item" key={item.id}><div className="item-photo"><img src={photoSrc(item.image)} alt={item.name}/><button className="item-heart" title="Guardar"><Heart size={15}/></button><span className="item-category">{item.category}</span></div><div className="item-info"><div><h3>{item.name}</h3><p>{item.brand} <span>·</span> {item.color}</p></div><button className="item-menu" aria-label="Eliminar prenda" onClick={()=>deleteItem(item.id)}><Trash2 size={15}/></button></div></article>)}</div>{filtered.length===0&&<div className="empty-state">No hay prendas en esta categoría todavía.</div>}{filtered.length>4&&<button className="see-all" onClick={()=>setShowAll(!showAll)}>{showAll?'Ver menos':'Ver las '+filtered.length+' prendas'} <ArrowUpRight size={15}/></button>}</section>
+        <section className="wardrobe-section"><div className="wardrobe-heading"><div><div className="eyebrow blush">TUS FAVORITOS, JUNTITOS</div><h2>Mi armario <span className="item-total">{items.length}</span></h2></div><div className="wardrobe-head-actions"><button className="outline-button tryon-entry" onClick={()=>{setTryOnItemId(tryOnItems[0]?.id ?? '');setShowTryOn(true)}}><Camera size={16}/> Probar en mí</button><button className="outline-button" onClick={()=>setShowAdd(true)}><Plus size={17}/> Añadir prenda</button></div></div><div className="wardrobe-toolbar"><div className="category-tabs">{categories.map(c=><button key={c} className={category===c?'current':''} onClick={()=>{setCategory(c);setShowAll(false)}}>{c}</button>)}</div><div className="toolbar-actions"><label className="search-box"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar en mi armario"/></label><button className="filter-btn"><SlidersHorizontal size={16}/><span>Filtrar</span></button></div></div><div className="item-grid">{visibleItems.map(item=><article className="wardrobe-item" key={item.id}><div className="item-photo"><img src={photoSrc(item.image)} alt={item.name}/><button className="item-heart" title="Guardar"><Heart size={15}/></button><span className="item-category">{item.category}</span></div><div className="item-info"><div><h3>{item.name}</h3><p>{item.brand} <span>·</span> {item.color}</p></div><button className="item-menu" aria-label="Eliminar prenda" onClick={()=>deleteItem(item.id)}><Trash2 size={15}/></button></div></article>)}</div>{filtered.length===0&&<div className="empty-state">No hay prendas en esta categoría todavía.</div>}{filtered.length>4&&<button className="see-all" onClick={()=>setShowAll(!showAll)}>{showAll?'Ver menos':'Ver las '+filtered.length+' prendas'} <ArrowUpRight size={15}/></button>}</section>
         <footer><span>outfit check <span className="footer-heart">♥</span> hecho con estilo</span><span>Tu armario. Tus reglas.</span></footer>
       </div>
     </main>
     {notice&&<div className="toast"><Check size={17}/>{notice}</div>}
     {showAdd&&<div className="modal-backdrop" onClick={()=>setShowAdd(false)}><form className="add-modal" onSubmit={addItem} onClick={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={()=>setShowAdd(false)}><X size={19}/></button><div className="eyebrow blush">UNA NUEVA FAVORITA</div><h2>Añade una prenda</h2><p className="modal-sub">Vamos haciendo sitio a todo lo que te gusta.</p><label className="upload-zone"><Upload size={22}/><span>Sube una foto</span><small>JPG, PNG · máximo 10 MB</small><input type="file" name="photo" accept="image/*"/></label><label className="modal-label">¿Cómo se llama?<input name="name" placeholder="Ej. Camisa de lino" required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category"><option>Prendas</option><option>Zapatos</option><option>Bolsos</option><option>Accesorios</option></select></label><label className="modal-label">Color<input name="color" placeholder="Ej. Azul cielo"/></label></div><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" placeholder="Ej. COS"/></label><button className="generate-button modal-submit"><Plus size={17}/> Añadir a mi armario</button></form></div>}
     {showLogin&&<div className="modal-backdrop" onClick={()=>setShowLogin(false)}><form className="add-modal login-modal" onSubmit={sendMagicLink} onClick={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={()=>setShowLogin(false)}><X size={19}/></button><div className="eyebrow blush">TU ARMARIO, CONTIGO</div><h2>Guarda tus prendas</h2><p className="modal-sub">Entra con tu email y tendrás tu armario en todos tus dispositivos.</p>{supabase?<><label className="modal-label">Tu email<input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="tu@email.com" required/></label><button className="generate-button modal-submit"><ArrowUpRight size={17}/> Enviarme un enlace de acceso</button></>:<><p className="login-setup">Para activar tu cuenta, añade la URL y la clave pública de Supabase en el archivo <code>.env</code>, ejecuta el esquema incluido y vuelve a abrir la app.</p><button type="button" className="generate-button modal-submit" onClick={()=>setShowLogin(false)}>Entendido</button></>}</form></div>}
+    {showTryOn&&<div className="modal-backdrop tryon-backdrop" onClick={()=>{if(!tryOnBusy){setShowTryOn(false);setTryOnResult('');setTryOnPhoto('')}}}><section className="tryon-modal" onClick={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={()=>{if(!tryOnBusy){setShowTryOn(false);setTryOnResult('');setTryOnPhoto('')}}}><X size={19}/></button><div className="eyebrow blush">EL ESPEJO VIRTUAL</div><h2>¿Cómo te queda?</h2><p className="modal-sub">Elige una prenda y sube una foto de cuerpo entero para verla puesta.</p>{tryOnResult?<div className="tryon-result"><img src={tryOnResult} alt="Resultado de la prueba virtual"/><button className="outline-button" onClick={()=>{setTryOnResult('');setTryOnConsent(false)}}><RefreshCw size={15}/> Probar otra prenda</button><p>Vista orientativa generada con IA; el ajuste y el color pueden diferir de la prenda real.</p></div>:<><label className="modal-label">Prenda de mi armario<select value={tryOnItem?.id ?? ''} onChange={e=>setTryOnItemId(e.target.value)}>{tryOnItems.map(item=><option key={item.id} value={item.id}>{item.name} · {item.color}</option>)}</select></label>{tryOnItem&&<div className="tryon-garment"><img src={photoSrc(tryOnItem.image)} alt=""/><div><b>{tryOnItem.name}</b><small>Mejor con una foto clara de la prenda</small></div></div>}<label className="tryon-upload"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={async e=>{const file=e.target.files?.[0];if(file){try{setTryOnPhoto(await compressPhoto(file));setTryOnResult('');setTryOnError('')}catch(error){setTryOnError(error.message)}}}}/><span className="tryon-upload-icon">{tryOnPhoto?<img src={tryOnPhoto} alt="Vista previa de tu foto"/>:<ImageUp size={23}/>}</span><span><b>{tryOnPhoto?'Cambiar mi foto':'Subir una foto de cuerpo entero'}</b><small>JPG, PNG o WebP. Centrada, con buena luz y la ropa visible.</small></span></label><div className="tryon-data-note">La generación usa FASHN: cuesta 1 crédito API por imagen (0,075 USD por uso; compra mínima de 100 créditos / 7,50 USD). Los créditos se compran por separado. Tu foto se envía temporalmente para procesarla; FASHN conserva metadatos de la solicitud y borra la copia de trabajo al terminar. Nosotros no guardamos ni tu foto ni el resultado. <a href="https://docs.fashn.ai/api-overview/data-retention-privacy" target="_blank" rel="noreferrer">Detalles de privacidad</a></div><label className="tryon-consent"><input type="checkbox" checked={tryOnConsent} onChange={e=>setTryOnConsent(e.target.checked)}/><span>Tengo permiso para usar esta foto y acepto enviarla a FASHN para generar la prueba virtual.</span></label>{tryOnError&&<div className="tryon-error">{tryOnError}</div>}<button className="generate-button tryon-submit" disabled={tryOnBusy||!tryOnPhoto||!tryOnItem} onClick={generateTryOn}>{tryOnBusy?<><LoaderCircle className="spinning" size={17}/> Creando tu prueba virtual…</>:<><Sparkles size={17}/> Probar esta prenda <span className="tryon-cost">1 crédito API</span></>}</button><p className="tryon-privacy">Puedes cerrar esta ventana para eliminar la foto y el resultado de la sesión. Límite: 3 intentos por día y cuenta.</p></>}</section></div>}
   </div>
 }
 

@@ -1,0 +1,2 @@
+[functions.virtual-try-on]
+verify_jwt = true
