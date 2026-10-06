@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
 import {
-  ArrowDownUp, ArrowRight, Check, Cloud, Download, Heart, LayoutGrid, LogIn,
+  ArrowDownUp, ArrowRight, Check, Cloud, Download, Heart, LayoutGrid, LoaderCircle, LogIn,
   LogOut, Menu, Plus, Search, Shirt, Sparkles, Trash2, Upload, UserRound, X,
 } from 'lucide-react'
 import './styles.css'
@@ -14,6 +14,12 @@ const categories = ['Prendas', 'Zapatos', 'Bolsos', 'Accesorios']
 const occasions = ['Diario', 'Trabajo', 'Universidad', 'Cena', 'Brunch', 'Fiesta', 'Viaje']
 const localItemsKey = 'outfit-check-wardrobe-v2'
 const localLooksKey = 'outfit-check-saved-looks-v2'
+const hasAuthCallback = () => {
+  const params = new URLSearchParams(window.location.search)
+  const hash = new URLSearchParams(window.location.hash.slice(1))
+  return params.has('code') || params.has('token_hash') || params.has('error') || params.has('error_code')
+    || hash.has('access_token') || hash.has('error') || hash.has('error_code')
+}
 
 const readLocal = (key, fallback = []) => {
   try {
@@ -86,6 +92,11 @@ function App() {
   const [showEditor, setShowEditor] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
   const [showLogin, setShowLogin] = useState(false)
+  const [loginLinkSent, setLoginLinkSent] = useState(false)
+  const [loginBusy, setLoginBusy] = useState(false)
+  const [showAuthCallback, setShowAuthCallback] = useState(hasAuthCallback)
+  const [authCallbackStatus, setAuthCallbackStatus] = useState('processing')
+  const [authCallbackError, setAuthCallbackError] = useState('')
   const [email, setEmail] = useState('')
   const [category, setCategory] = useState('Todas')
   const [search, setSearch] = useState('')
@@ -101,18 +112,75 @@ function App() {
       setItems(readLocalItems())
       setLooks(readLocal(localLooksKey))
       setDataReady(true)
+      if (hasAuthCallback()) {
+        setAuthCallbackError('Falta conectar Supabase para validar el enlace de acceso.')
+        setAuthCallbackStatus('error')
+      }
       return
     }
     let alive = true
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!alive) return
-      if (error) flash('No se pudo comprobar la sesión.')
-      setSession(data?.session || null)
-      setAuthReady(true)
-    })
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession)
       setAuthReady(true)
+    })
+    const finishAuthCallback = async () => {
+      const url = new URL(window.location.href)
+      const params = url.searchParams
+      const hash = new URLSearchParams(url.hash.slice(1))
+      const callbackPresent = hasAuthCallback()
+      const errorMessage = params.get('error_description') || hash.get('error_description')
+        || params.get('error') || hash.get('error') || params.get('error_code') || hash.get('error_code')
+      if (errorMessage) {
+        if (alive) {
+          setAuthCallbackError(errorMessage)
+          setAuthCallbackStatus('error')
+          setAuthReady(true)
+        }
+        window.history.replaceState({}, document.title, url.pathname)
+        return
+      }
+
+      const tokenHash = params.get('token_hash')
+      if (tokenHash) {
+        const linkType = params.get('type')
+        const allowedTypes = ['email', 'magiclink', 'signup', 'invite', 'recovery', 'email_change']
+        if (!linkType || !allowedTypes.includes(linkType)) {
+          if (alive) { setAuthCallbackError('El enlace de acceso no tiene un tipo válido.'); setAuthCallbackStatus('error'); setAuthReady(true) }
+          window.history.replaceState({}, document.title, url.pathname)
+          return
+        }
+        const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: linkType })
+        if (!alive) return
+        if (error || !data?.session) {
+          setAuthCallbackError(error?.message || 'No se pudo confirmar el enlace. Pide uno nuevo e inténtalo otra vez.')
+          setAuthCallbackStatus('error')
+        } else {
+          setSession(data.session)
+          setAuthCallbackStatus('success')
+        }
+        setAuthReady(true)
+        window.history.replaceState({}, document.title, url.pathname)
+        return
+      }
+
+      const { data, error } = await supabase.auth.getSession()
+      if (!alive) return
+      setSession(data?.session || null)
+      if (callbackPresent) {
+        if (error || !data?.session) {
+          setAuthCallbackError(error?.message || 'No se encontró una sesión activa. El enlace puede haber caducado; solicita uno nuevo.')
+          setAuthCallbackStatus('error')
+        } else setAuthCallbackStatus('success')
+        window.history.replaceState({}, document.title, url.pathname)
+      }
+      setAuthReady(true)
+    }
+    finishAuthCallback().catch(error => {
+      if (!alive) return
+      setAuthCallbackError(error?.message || 'No se pudo completar el inicio de sesión.')
+      setAuthCallbackStatus('error')
+      setAuthReady(true)
+      if (hasAuthCallback()) window.history.replaceState({}, document.title, window.location.pathname)
     })
     return () => { alive = false; listener.subscription.unsubscribe() }
   }, [])
@@ -294,9 +362,19 @@ function App() {
   const sendLoginLink = async event => {
     event.preventDefault()
     if (!supabase) return
-    const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: window.location.origin } })
-    if (error) flash(`No se pudo enviar el enlace: ${error.message}`)
-    else { setShowLogin(false); flash('Revisa tu correo: te hemos enviado un enlace de acceso.') }
+    setLoginBusy(true)
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { emailRedirectTo: window.location.origin, shouldCreateUser: true },
+      })
+      if (error) flash(`No se pudo enviar el enlace: ${error.message}`)
+      else setLoginLinkSent(true)
+    } catch (error) {
+      flash(`No se pudo enviar el enlace: ${error.message || 'Comprueba tu conexión e inténtalo de nuevo.'}`)
+    } finally {
+      setLoginBusy(false)
+    }
   }
 
   const exportWardrobe = () => {
@@ -324,7 +402,7 @@ function App() {
     </aside>
     {mobileMenu && <button className="mobile-overlay" aria-label="Cerrar menú" onClick={() => setMobileMenu(false)}/>}
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu-btn" onClick={() => setMobileMenu(true)} aria-label="Abrir menú"><Menu size={20}/></button><div className="crumb">Mi espacio <span>/</span> <b>{title}</b></div><div className="top-right"><span className={`sync-status ${cloudMode ? 'is-cloud' : ''}`}><Cloud size={15}/>{cloudMode ? 'Sincronizado' : 'Solo este dispositivo'}</span><span className="top-avatar">{session?.user?.email?.[0]?.toUpperCase() || 'O'}</span></div></header>
+      <header className="topbar"><button className="mobile-menu-btn" onClick={() => setMobileMenu(true)} aria-label="Abrir menú"><Menu size={20}/></button><div className="crumb">Mi espacio <span>/</span> <b>{title}</b></div><div className="top-right"><span className={`sync-status ${cloudMode ? 'is-cloud' : ''}`}><Cloud size={15}/>{cloudMode ? 'Sincronizado' : 'Solo este dispositivo'}</span>{session ? <button className="top-login" onClick={() => setPage('profile')}>Mi cuenta</button> : <button className="top-login" onClick={() => { setLoginLinkSent(false); setEmail(''); setShowLogin(true) }}><LogIn size={15}/> Iniciar sesión</button>}<span className="top-avatar">{session?.user?.email?.[0]?.toUpperCase() || 'O'}</span></div></header>
       <div className="page-content">
         {page === 'wardrobe' && <>
           <section className="welcome-row"><div><div className="eyebrow">TU ESPACIO, A TU MANERA</div><h1>Mi armario</h1><p>Organiza tus prendas y crea combinaciones con lo que ya tienes.</p></div><button className="primary-button" disabled={!dataReady || busy} onClick={() => { setEditingItem(null); setShowEditor(true) }}><Plus size={17}/> Añadir prenda</button></section>
@@ -351,8 +429,18 @@ function App() {
       </div>
     </main>
     {notice && <div className="toast"><Check size={17}/>{notice}</div>}
+    {showAuthCallback && <div className="modal-backdrop auth-callback-backdrop"><section className="auth-callback" aria-live="polite">
+      <div className={`auth-callback-icon ${authCallbackStatus}`}>
+        {authCallbackStatus === 'processing' ? <LoaderCircle className="spinning" size={24}/> : authCallbackStatus === 'success' ? <Check size={24}/> : <X size={24}/>}
+      </div>
+      <div className="eyebrow blush">ACCESO A OUTFIT CHECK</div>
+      <h2>{authCallbackStatus === 'processing' ? 'Comprobando tu acceso…' : authCallbackStatus === 'success' ? 'Ya has iniciado sesión' : 'No se pudo iniciar sesión'}</h2>
+      <p>{authCallbackStatus === 'processing' ? 'Estamos validando el enlace del correo y preparando tu armario.' : authCallbackStatus === 'success' ? 'El enlace se ha validado. Tu armario está listo.' : authCallbackError}</p>
+      {authCallbackStatus === 'success' && <button className="generate-button" disabled={!dataReady || busy} onClick={() => { setShowAuthCallback(false); setPage('wardrobe') }}>{busy ? 'Cargando tu armario…' : 'Entrar en mi armario'}<ArrowRight size={16}/></button>}
+      {authCallbackStatus === 'error' && <div className="auth-callback-actions"><button className="generate-button" onClick={() => { setShowAuthCallback(false); setShowLogin(true) }}><LogIn size={16}/> Solicitar otro enlace</button><button className="text-action" onClick={() => setShowAuthCallback(false)}>Volver a la aplicación</button></div>}
+    </section></div>}
     {showEditor && <div className="modal-backdrop" onClick={() => setShowEditor(false)}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowEditor(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className="upload-zone"><Upload size={21}/><span>{editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>JPG, PNG o WebP · máximo 10 MB</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp"/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" defaultValue={editingItem?.category || 'Prendas'}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
-    {showLogin && <div className="modal-backdrop" onClick={() => setShowLogin(false)}><form className="add-modal" onSubmit={sendLoginLink} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowLogin(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">SINCRONIZACIÓN</div><h2>Conecta tu cuenta</h2><p className="modal-sub">Te enviaremos un enlace de acceso por correo.</p><label className="modal-label">Correo electrónico<input type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="tu@email.com" required/></label><button className="generate-button modal-submit"><LogIn size={16}/> Enviarme el enlace</button></form></div>}
+    {showLogin && <div className="modal-backdrop" onClick={() => setShowLogin(false)}><form className="add-modal" onSubmit={sendLoginLink} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowLogin(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">ACCESO SIN CONTRASEÑA</div><h2>{loginLinkSent ? 'Revisa tu correo' : 'Iniciar sesión'}</h2><p className="modal-sub">{loginLinkSent ? <>Enviamos un enlace a <b>{email}</b>. Ábrelo para entrar; si es tu primera vez, también confirmará tu cuenta.</> : 'Escribe tu correo y te enviaremos un enlace seguro para acceder.'}</p><label className="modal-label">Correo electrónico<input type="email" value={email} onChange={event => { setEmail(event.target.value); setLoginLinkSent(false) }} placeholder="tu@email.com" autoComplete="email" required/></label><button className="generate-button modal-submit" disabled={loginBusy}>{loginBusy ? 'Enviando…' : loginLinkSent ? 'Enviar otro enlace' : 'Enviar enlace de acceso'}<LogIn size={16}/></button></form></div>}
   </div>
 }
 
