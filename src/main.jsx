@@ -1,199 +1,358 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
-import { Heart, Plus, Sparkles, Sun, CloudRain, Wind, Search, SlidersHorizontal, Shirt, CalendarDays, UserRound, LayoutGrid, X, ChevronDown, RefreshCw, Check, ArrowUpRight, CloudSun, Upload, Trash2, Menu, Camera, LoaderCircle, ImageUp } from 'lucide-react'
+import {
+  ArrowDownUp, ArrowRight, Check, Cloud, Download, Heart, LayoutGrid, LogIn,
+  LogOut, Menu, Plus, Search, Shirt, Sparkles, Trash2, Upload, UserRound, X,
+} from 'lucide-react'
 import './styles.css'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+const categories = ['Prendas', 'Zapatos', 'Bolsos', 'Accesorios']
+const occasions = ['Diario', 'Trabajo', 'Universidad', 'Cena', 'Brunch', 'Fiesta', 'Viaje']
+const localItemsKey = 'outfit-check-wardrobe-v2'
+const localLooksKey = 'outfit-check-saved-looks-v2'
 
-const starterItems = [
-  { id: 1, name: 'Blazer oversize', category: 'Prendas', color: 'Arena', brand: 'Massimo Dutti', image: 'photo-1591369822096-ffd140ec948f', type: 'blazer', tags: ['arreglado', 'capas'] },
-  { id: 2, name: 'Top de punto', category: 'Prendas', color: 'Marfil', brand: 'COS', image: 'photo-1618354691373-d851c5c3a990', type: 'top', tags: ['básico', 'comodidad'] },
-  { id: 3, name: 'Vaquero recto', category: 'Prendas', color: 'Azul claro', brand: 'Levi’s', image: 'photo-1541099649105-f69ad21f3246', type: 'jeans', tags: ['casual'] },
-  { id: 4, name: 'Falda satinada', category: 'Prendas', color: 'Champán', brand: 'Sézane', image: 'photo-1583496661160-fb5886a0aaaa', type: 'skirt', tags: ['arreglado', 'cita'] },
-  { id: 5, name: 'Bolso de hombro', category: 'Bolsos', color: 'Marrón', brand: 'Polène', image: 'photo-1584917865442-de89df76afd3', type: 'bag', tags: ['arreglado'] },
-  { id: 6, name: 'Bailarinas', category: 'Zapatos', color: 'Granate', brand: 'Jonak', image: 'photo-1535043934128-cf0b28d52f95', type: 'shoes', tags: ['comodidad', 'arreglado'] },
-  { id: 7, name: 'Gabardina ligera', category: 'Prendas', color: 'Beige', brand: 'Mango', image: 'photo-1548126032-079a0fb0099d', type: 'coat', tags: ['capas', 'lluvia'] },
-  { id: 8, name: 'Collar dorado', category: 'Accesorios', color: 'Dorado', brand: 'PDPAOLA', image: 'photo-1611652022419-a9419f74343d', type: 'accessory', tags: ['arreglado'] },
-]
-
-const imageUrl = (id, w = 500) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=${w}&q=85`
-const photoSrc = image => image?.startsWith('blob:') || image?.startsWith('http') || image?.startsWith('data:') ? image : imageUrl(image)
-const occasions = ['Universidad', 'Cena', 'Brunch', 'Cita', 'Fiesta', 'Boda', 'Viaje']
-const categories = ['Todo', 'Prendas', 'Zapatos', 'Bolsos', 'Accesorios']
+const readLocal = (key, fallback = []) => {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null')
+    return Array.isArray(value) ? value : fallback
+  } catch { return fallback }
+}
+const readLocalItems = () => {
+  const current = readLocal(localItemsKey, null)
+  if (current) return current
+  const oldItems = readLocal('outfit-check-wardrobe', [])
+  const demoIds = new Set([1, 2, 3, 4, 5, 6, 7, 8])
+  const migrated = oldItems.filter(item => !demoIds.has(item.id))
+  if (migrated.length) { try { localStorage.setItem(localItemsKey, JSON.stringify(migrated)) } catch {} }
+  return migrated
+}
+const imageStoragePath = value => {
+  if (!value || !value.startsWith('http')) return value || ''
+  try {
+    const path = new URL(value).pathname
+    const marker = '/storage/v1/object/public/wardrobe-photos/'
+    const signedMarker = '/storage/v1/object/sign/wardrobe-photos/'
+    if (path.includes(marker)) return decodeURIComponent(path.split(marker)[1])
+    if (path.includes(signedMarker)) return decodeURIComponent(path.split(signedMarker)[1])
+  } catch {}
+  return value
+}
+const mapWardrobeRow = async row => {
+  const imagePath = imageStoragePath(row.image_url)
+  let image = imagePath
+  if (imagePath && !imagePath.startsWith('data:') && !imagePath.startsWith('blob:') && !imagePath.startsWith('http')) {
+    const { data } = await supabase.storage.from('wardrobe-photos').createSignedUrl(imagePath, 60 * 60 * 24)
+    image = data?.signedUrl || ''
+  }
+  return {
+    id: row.id, name: row.name, category: row.category, color: row.color || '',
+    brand: row.brand || '', image, imagePath, createdAt: row.created_at,
+  }
+}
+const toDataUrl = file => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => {
+    const image = new Image()
+    image.onerror = () => reject(new Error('El archivo no parece ser una imagen válida.'))
+    image.onload = () => {
+      const scale = Math.min(1, 1440 / Math.max(image.width, image.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale)
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', 0.78))
+    }
+    image.src = reader.result
+  }
+  reader.onerror = () => reject(new Error('No se pudo leer la imagen.'))
+  reader.readAsDataURL(file)
+})
+const shuffle = list => [...list].sort(() => Math.random() - 0.5)
 
 function App() {
-  const [items, setItems] = useState(starterItems)
-  const [category, setCategory] = useState('Todo')
-  const [activeNav, setActiveNav] = useState('Mi armario')
-  const [occasion, setOccasion] = useState('Brunch')
-  const [vibe, setVibe] = useState('Arreglada, pero sin esfuerzo')
-  const [outfitIndex, setOutfitIndex] = useState(0)
-  const [liked, setLiked] = useState(false)
-  const [query, setQuery] = useState('')
-  const [showAdd, setShowAdd] = useState(false)
-  const [showAll, setShowAll] = useState(false)
-  const [mobileMenu, setMobileMenu] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [page, setPage] = useState('wardrobe')
+  const [items, setItems] = useState([])
+  const [looks, setLooks] = useState([])
   const [session, setSession] = useState(null)
-  const [showLogin, setShowLogin] = useState(false)
-  const [loginEmail, setLoginEmail] = useState('')
+  const [authReady, setAuthReady] = useState(!supabase)
+  const [dataReady, setDataReady] = useState(false)
   const [cloudMode, setCloudMode] = useState(false)
-  const [showTryOn, setShowTryOn] = useState(false)
-  const [tryOnItemId, setTryOnItemId] = useState('')
-  const [tryOnPhoto, setTryOnPhoto] = useState('')
-  const [tryOnResult, setTryOnResult] = useState('')
-  const [tryOnBusy, setTryOnBusy] = useState(false)
-  const [tryOnError, setTryOnError] = useState('')
-  const [tryOnConsent, setTryOnConsent] = useState(false)
-  const filtered = useMemo(() => items.filter(x => (category === 'Todo' || x.category === category) && `${x.name} ${x.color} ${x.brand}`.toLowerCase().includes(query.toLowerCase())), [items, category, query])
-  const outfitSets = [
-    [1, 2, 3, 5], [4, 2, 6, 8], [1, 2, 6, 5],
-  ]
-  const currentOutfit = (outfitSets[outfitIndex % outfitSets.length]).map(id => items.find(x => x.id === id)).filter(Boolean)
-  const tryOnItems = items.filter(item => item.category === 'Prendas')
-  const tryOnItem = tryOnItems.find(item => String(item.id) === String(tryOnItemId)) || tryOnItems[0]
-  const visibleItems = showAll ? filtered : filtered.slice(0, 4)
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
+  const [mobileMenu, setMobileMenu] = useState(false)
+  const [showEditor, setShowEditor] = useState(false)
+  const [editingItem, setEditingItem] = useState(null)
+  const [showLogin, setShowLogin] = useState(false)
+  const [email, setEmail] = useState('')
+  const [category, setCategory] = useState('Todas')
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState('newest')
+  const [occasion, setOccasion] = useState('Diario')
+  const [mood, setMood] = useState('Cómoda')
+  const [currentLook, setCurrentLook] = useState([])
+
+  const flash = message => { setNotice(message); window.setTimeout(() => setNotice(''), 3200) }
 
   useEffect(() => {
     if (!supabase) {
-      try { const saved = localStorage.getItem('outfit-check-wardrobe'); if (saved) setItems(JSON.parse(saved)) } catch {}
+      setItems(readLocalItems())
+      setLooks(readLocal(localLooksKey))
+      setDataReady(true)
       return
     }
-    supabase.auth.getSession().then(({ data }) => setSession(data.session))
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, current) => setSession(current))
-    return () => listener.subscription.unsubscribe()
+    let alive = true
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!alive) return
+      if (error) flash('No se pudo comprobar la sesión.')
+      setSession(data?.session || null)
+      setAuthReady(true)
+    })
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      setAuthReady(true)
+    })
+    return () => { alive = false; listener.subscription.unsubscribe() }
   }, [])
 
   useEffect(() => {
-    if (!supabase) { try { localStorage.setItem('outfit-check-wardrobe', JSON.stringify(items)) } catch {} }
-  }, [items])
+    if (!authReady) return
+    let alive = true
+    if (!supabase || !session?.user) {
+      setCloudMode(false)
+      setBusy(false)
+      setItems(readLocalItems())
+      setLooks(readLocal(localLooksKey))
+      setDataReady(true)
+      return () => { alive = false }
+    }
+    setDataReady(false)
+    setBusy(true)
+    Promise.all([
+      supabase.from('wardrobe_items').select('*').order('created_at', { ascending: false }),
+      supabase.from('saved_outfits').select('*').order('created_at', { ascending: false }),
+    ]).then(async ([wardrobeResult, looksResult]) => {
+      if (!alive) return
+      if (wardrobeResult.error) throw wardrobeResult.error
+      if (looksResult.error) throw looksResult.error
+      const cloudItems = await Promise.all((wardrobeResult.data || []).map(mapWardrobeRow))
+      const itemsById = new Map(cloudItems.map(item => [String(item.id), item]))
+      setItems(cloudItems)
+      setLooks((looksResult.data || []).map(row => ({
+        id: row.id, name: row.name, occasion: row.occasion || '', mood: row.mood || '',
+        createdAt: row.created_at, items: (row.item_ids || []).map(id => itemsById.get(String(id))).filter(Boolean),
+      })))
+      setCloudMode(true)
+      setDataReady(true)
+    }).catch(error => {
+      if (alive) {
+        setCloudMode(false)
+        setItems(readLocalItems())
+        setLooks(readLocal(localLooksKey))
+        setDataReady(true)
+        flash(`No se pudieron cargar tus datos de Supabase. Se abre el armario local: ${error.message || 'revisa la configuración'}`)
+      }
+    }).finally(() => { if (alive) setBusy(false) })
+    return () => { alive = false }
+  }, [authReady, session?.user?.id])
 
   useEffect(() => {
-    if (!session?.user) { setCloudMode(false); return }
-    let cancelled = false
-    supabase.from('wardrobe_items').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false }).then(({ data, error }) => {
-      if (cancelled) return
-      if (error) { setNotice('Revisa la configuración de la tabla en Supabase'); setTimeout(() => setNotice(''), 3500); return }
-      setItems((data || []).map(row => ({ id: row.id, name: row.name, category: row.category, color: row.color || '—', brand: row.brand || '—', image: row.image_url || 'photo-1591369822096-ffd140ec948f', type: 'cloud', tags: row.tags || [] })))
-      setCloudMode(true)
-    })
-    return () => { cancelled = true }
-  }, [session])
-
-  const saveToSupabase = async (item, file) => {
-    if (!supabase || !session?.user) return
-    let photoUrl = item.image?.startsWith('http') ? item.image : imageUrl(item.image)
-    if (file?.size) {
-      const path = `${session.user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`
-      const { error: uploadError } = await supabase.storage.from('wardrobe-photos').upload(path, file, { upsert: false })
-      if (!uploadError) photoUrl = supabase.storage.from('wardrobe-photos').getPublicUrl(path).data.publicUrl
-    }
-    const { data, error } = await supabase.from('wardrobe_items').insert({ user_id: session.user.id, name: item.name, category: item.category, color: item.color, brand: item.brand, image_url: photoUrl, tags: item.tags ?? [] }).select().single()
-    if (error) { setNotice('No se pudo guardar en Supabase; revisa la configuración'); setTimeout(() => setNotice(''), 3500); return }
-    if (data) setItems(prev => prev.map(existing => existing.id === item.id ? { ...existing, id: data.id, image: data.image_url || existing.image } : existing))
-  }
-
-  const addItem = async (event) => {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    const file = form.get('photo')
-    let image = 'photo-1591369822096-ffd140ec948f'
-    if (file?.size) image = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(file) })
-    const item = { id: Date.now(), name: form.get('name'), category: form.get('category'), color: form.get('color') || 'Sin especificar', brand: form.get('brand') || '—', image, type: 'custom', tags: [] }
-    setItems(prev => [item, ...prev]); setShowAdd(false); setNotice('Prenda añadida a tu armario ✨'); setTimeout(() => setNotice(''), 2800)
-    await saveToSupabase(item, file?.size ? file : null)
-  }
-
-  const sendMagicLink = async (event) => {
-    event.preventDefault()
-    const { error } = await supabase.auth.signInWithOtp({ email: loginEmail, options: { emailRedirectTo: window.location.origin } })
-    if (error) setNotice('No se pudo enviar el enlace. Comprueba la configuración de Supabase.')
-    else setNotice('Te hemos enviado un enlace de acceso por email ✨')
-    setShowLogin(false); setTimeout(() => setNotice(''), 4000)
-  }
-
-  const deleteItem = async (id) => {
-    setItems(prev => prev.filter(x => x.id !== id))
-    if (supabase && session?.user && typeof id === 'string') await supabase.from('wardrobe_items').delete().eq('id', id).eq('user_id', session.user.id)
-  }
-
-  const compressPhoto = (file, maxSide = 1296) => new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error('No se pudo leer la foto.'))
-    reader.onload = () => {
-      const image = new Image()
-      image.onerror = () => reject(new Error('El archivo no parece ser una imagen válida.'))
-      image.onload = () => {
-        const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale)
-        canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height)
-        resolve(canvas.toDataURL('image/jpeg', .84))
-      }
-      image.src = reader.result
-    }
-    reader.readAsDataURL(file)
-  })
-
-  const generateTryOn = async () => {
-    setTryOnError(''); setTryOnResult('')
-    if (!supabase || !session?.user) { setTryOnError('Conecta tu cuenta de Supabase desde el perfil para usar la prueba virtual.'); return }
-    if (!tryOnPhoto || !tryOnItem) { setTryOnError('Sube tu foto y elige una prenda del armario.'); return }
-    if (!tryOnConsent) { setTryOnError('Confirma que tienes permiso para usar esta foto.'); return }
-    setTryOnBusy(true)
+    if (!dataReady || cloudMode) return
     try {
-      let garmentImage = tryOnItem.image
-      if (garmentImage.startsWith('blob:') || garmentImage.startsWith('data:')) {
-        const response = await fetch(garmentImage); const file = await response.blob()
-        garmentImage = await compressPhoto(new File([file], 'prenda.jpg', { type: file.type || 'image/jpeg' }), 1296)
-      }
-      const { data, error } = await supabase.functions.invoke('virtual-try-on', { body: { modelImage: tryOnPhoto, garmentImage, category: 'auto' } })
-      if (error) throw new Error(error.message || 'No se ha podido generar la prueba virtual.')
-      if (!data?.image) throw new Error(data?.error || 'No se ha recibido una imagen de resultado.')
-      setTryOnResult(data.image)
-    } catch (error) {
-      let message = error?.message || 'No se ha podido generar el resultado.'
-      try { const body = typeof error?.context?.json === 'function' ? await error.context.json() : error?.context?.json; if (body?.error) message = body.error } catch {}
-      setTryOnError(message.includes('FunctionsFetchError') || message.includes('Failed to fetch') ? 'No está publicada la función de prueba virtual o falta su clave de proveedor.' : message)
-    } finally { setTryOnBusy(false) }
+      localStorage.setItem(localItemsKey, JSON.stringify(items))
+      localStorage.setItem(localLooksKey, JSON.stringify(looks))
+    } catch { flash('No hay espacio local suficiente. Elimina alguna foto o conecta Supabase para sincronizar.') }
+  }, [items, looks, dataReady, cloudMode])
+
+  const filteredItems = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase('es')
+    const result = items.filter(item => (category === 'Todas' || item.category === category)
+      && `${item.name} ${item.color} ${item.brand}`.toLocaleLowerCase('es').includes(needle))
+    return result.sort((a, b) => sort === 'name'
+      ? a.name.localeCompare(b.name, 'es')
+      : sort === 'category'
+        ? a.category.localeCompare(b.category, 'es') || a.name.localeCompare(b.name, 'es')
+        : new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+  }, [items, category, search, sort])
+
+  const generateLook = () => {
+    if (!items.length) { flash('Añade algunas prendas para crear tu primer look.'); return }
+    const selected = []
+    for (const group of ['Prendas', 'Zapatos', 'Bolsos', 'Accesorios']) {
+      const choices = shuffle(items.filter(item => item.category === group && !selected.some(x => x.id === item.id)))
+      if (choices.length && (group === 'Prendas' || Math.random() > 0.38)) selected.push(choices[0])
+    }
+    if (!selected.length) selected.push(shuffle(items)[0])
+    setCurrentLook(selected)
   }
 
-  const makeLook = () => { setOutfitIndex(i => i + 1); setLiked(false) }
+  const saveLook = async () => {
+    if (!currentLook.length) return
+    const look = {
+      id: crypto.randomUUID(), name: `${occasion} · ${new Date().toLocaleDateString('es-ES')}`,
+      occasion, mood, items: currentLook, createdAt: new Date().toISOString(),
+    }
+    if (cloudMode && session?.user) {
+      const { data, error } = await supabase.from('saved_outfits').insert({
+        user_id: session.user.id, name: look.name, occasion, mood,
+        item_ids: currentLook.map(item => item.id),
+      }).select().single()
+      if (error) { flash(`No se pudo guardar el look: ${error.message}`); return }
+      look.id = data.id
+    }
+    setLooks(previous => [look, ...previous])
+    flash('Look guardado.')
+  }
 
-  const nav = <>
-    <div className="brand"><div className="brand-mark">oc</div><span>outfit check</span></div>
-    <div className="nav-label">TU ESPACIO</div>
-    <button className={`nav-item ${activeNav === 'Mi armario' ? 'active' : ''}`} onClick={() => {setActiveNav('Mi armario');setMobileMenu(false)}}><LayoutGrid size={18}/> Mi armario <span className="nav-count">{items.length}</span></button>
-    <button className={`nav-item ${activeNav === 'Mis looks' ? 'active' : ''}`} onClick={() => {setActiveNav('Mis looks');setMobileMenu(false)}}><Heart size={18}/> Mis looks</button>
-    <button className={`nav-item ${activeNav === 'Mi perfil' ? 'active' : ''}`} onClick={() => {setActiveNav('Mi perfil');setMobileMenu(false)}}><UserRound size={18}/> Mi perfil</button>
-    <div className="side-note"><div className="side-note-icon"><Sparkles size={17}/></div><p>Tu armario, tus planes, <b>el look perfecto.</b></p><button onClick={() => document.getElementById('stylist')?.scrollIntoView({behavior:'smooth'})}>Descubrir mi estilo <ArrowUpRight size={14}/></button></div>
-    <button className="profile-mini profile-button" onClick={()=>session ? supabase?.auth.signOut() : setShowLogin(true)}><div className="avatar">M</div><div><b>{session?.user?.email || 'María García'}</b><small>{session ? 'Sesión conectada' : (supabase ? 'Conectar mi cuenta' : 'Modo de prueba')}</small></div>{session?<ChevronDown size={16}/>:<ArrowUpRight size={15}/>}</button>
-  </>
+  const removeLook = async look => {
+    if (cloudMode) {
+      const { error } = await supabase.from('saved_outfits').delete().eq('id', look.id)
+      if (error) { flash(`No se pudo eliminar el look: ${error.message}`); return }
+    }
+    setLooks(previous => previous.filter(entry => entry.id !== look.id))
+    flash('Look eliminado.')
+  }
+
+  const persistItem = async (form, file) => {
+    const name = String(form.get('name') || '').trim()
+    const itemCategory = String(form.get('category') || '')
+    if (!name || !categories.includes(itemCategory)) throw new Error('Completa el nombre y elige una categoría válida.')
+    let image = editingItem?.image || ''
+    let imagePath = editingItem?.imagePath || ''
+    if (file?.size) {
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Usa una imagen JPG, PNG o WebP.')
+      if (file.size > 10 * 1024 * 1024) throw new Error('La imagen no puede superar los 10 MB.')
+      if (cloudMode && session?.user) {
+        const path = `${session.user.id}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`
+        const { error: uploadError } = await supabase.storage.from('wardrobe-photos').upload(path, file, { upsert: false, contentType: file.type })
+        if (uploadError) throw uploadError
+        imagePath = path
+        const { data: signedData, error: signedError } = await supabase.storage.from('wardrobe-photos').createSignedUrl(path, 60 * 60 * 24)
+        if (signedError) throw signedError
+        image = signedData.signedUrl
+      } else image = await toDataUrl(file)
+    }
+    const record = {
+      name, category: itemCategory, color: String(form.get('color') || '').trim(),
+      brand: String(form.get('brand') || '').trim(), image,
+    }
+    if (cloudMode && session?.user) {
+      const payload = { name: record.name, category: record.category, color: record.color, brand: record.brand, image_url: imagePath }
+      if (editingItem) {
+        const { data, error } = await supabase.from('wardrobe_items').update(payload).eq('id', editingItem.id).select().single()
+        if (error) throw error
+        const updatedItem = await mapWardrobeRow(data)
+        setItems(previous => previous.map(item => item.id === editingItem.id ? updatedItem : item))
+        setLooks(previous => previous.map(look => ({ ...look, items: look.items.map(item => item.id === updatedItem.id ? updatedItem : item) })))
+        setCurrentLook(previous => previous.map(item => item.id === updatedItem.id ? updatedItem : item))
+        if (file?.size && editingItem.imagePath && editingItem.imagePath !== imagePath) {
+          await supabase.storage.from('wardrobe-photos').remove([editingItem.imagePath])
+        }
+      } else {
+        const { data, error } = await supabase.from('wardrobe_items').insert({ ...payload, user_id: session.user.id }).select().single()
+        if (error) throw error
+        const insertedItem = await mapWardrobeRow(data)
+        setItems(previous => [insertedItem, ...previous])
+      }
+    } else if (editingItem) {
+      const updated = { ...editingItem, ...record }
+      setItems(previous => previous.map(item => item.id === editingItem.id ? updated : item))
+      setLooks(previous => previous.map(look => ({ ...look, items: look.items.map(item => item.id === updated.id ? updated : item) })))
+      setCurrentLook(previous => previous.map(item => item.id === updated.id ? updated : item))
+    } else setItems(previous => [{ ...record, id: crypto.randomUUID(), createdAt: new Date().toISOString() }, ...previous])
+  }
+
+  const deleteItem = async item => {
+    if (!window.confirm(`¿Eliminar “${item.name}” del armario?`)) return
+    let warning = ''
+    if (cloudMode) {
+      const { error } = await supabase.from('wardrobe_items').delete().eq('id', item.id)
+      if (error) { flash(`No se pudo eliminar: ${error.message}`); return }
+      const affectedLooks = looks.filter(look => look.items.some(entry => entry.id === item.id))
+      for (const look of affectedLooks) {
+        const remaining = look.items.filter(entry => entry.id !== item.id)
+        const query = remaining.length
+          ? supabase.from('saved_outfits').update({ item_ids: remaining.map(entry => entry.id) }).eq('id', look.id)
+          : supabase.from('saved_outfits').delete().eq('id', look.id)
+        const { error: updateError } = await query
+        if (updateError) { warning = `Prenda eliminada, pero no se actualizaron todos los looks: ${updateError.message}`; break }
+      }
+      const imagePath = item.imagePath || imageStoragePath(item.image)
+      if (imagePath && !imagePath.startsWith('http') && !imagePath.startsWith('data:')) {
+        const { error: storageError } = await supabase.storage.from('wardrobe-photos').remove([imagePath])
+        if (storageError) warning = `Prenda eliminada, pero no se pudo borrar su foto: ${storageError.message}`
+      }
+    }
+    setItems(previous => previous.filter(entry => entry.id !== item.id))
+    setCurrentLook(previous => previous.filter(entry => entry.id !== item.id))
+    setLooks(previous => previous.map(look => ({ ...look, items: look.items.filter(entry => entry.id !== item.id) })).filter(look => look.items.length))
+    flash(warning || 'Prenda eliminada.')
+  }
+
+  const sendLoginLink = async event => {
+    event.preventDefault()
+    if (!supabase) return
+    const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: window.location.origin } })
+    if (error) flash(`No se pudo enviar el enlace: ${error.message}`)
+    else { setShowLogin(false); flash('Revisa tu correo: te hemos enviado un enlace de acceso.') }
+  }
+
+  const exportWardrobe = () => {
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), items, looks }, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url; anchor.download = 'outfit-check-copia.json'; anchor.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  const navItems = [
+    { id: 'wardrobe', label: 'Mi armario', icon: LayoutGrid },
+    { id: 'looks', label: 'Mis looks', icon: Heart },
+    { id: 'profile', label: 'Mi perfil', icon: UserRound },
+  ]
+  const title = navItems.find(item => item.id === page)?.label || 'Mi armario'
 
   return <div className="app-shell">
-    <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>{nav}</aside>
-    {mobileMenu && <button className="mobile-overlay" aria-label="Cerrar menú" onClick={()=>setMobileMenu(false)} />}
+    <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>
+      <a className="brand" href="#armario" onClick={event => { event.preventDefault(); setPage('wardrobe'); setMobileMenu(false) }}><span className="brand-mark">oc</span><span>outfit check</span></a>
+      <div className="nav-label">TU ESPACIO</div>
+      {navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => { setPage(id); setMobileMenu(false) }}><Icon size={18}/>{label}{id === 'wardrobe' && <span className="nav-count">{items.length}</span>}{id === 'looks' && <span className="nav-count">{looks.length}</span>}</button>)}
+      <div className="side-note"><Sparkles size={17}/><p>Tu armario, tus planes, <b>tu próximo look.</b></p><button onClick={() => { setPage('wardrobe'); setMobileMenu(false); generateLook() }}>Crear una combinación <ArrowRight size={14}/></button></div>
+      <button className="profile-mini profile-button" onClick={() => { setPage('profile'); setMobileMenu(false) }}><span className="avatar">{session?.user?.email?.[0]?.toUpperCase() || 'O'}</span><span className="profile-copy"><b>{session?.user?.email || 'Tu espacio personal'}</b><small>{cloudMode ? 'Sincronizado con Supabase' : 'Guardado en este dispositivo'}</small></span><ArrowRight size={15}/></button>
+    </aside>
+    {mobileMenu && <button className="mobile-overlay" aria-label="Cerrar menú" onClick={() => setMobileMenu(false)}/>}
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu-btn" onClick={()=>setMobileMenu(true)} aria-label="Abrir menú"><Menu size={20}/></button><div className="crumb">Mi espacio <span>/</span> <b>{activeNav}</b></div><div className="top-right"><div className="weather"><Sun size={17}/><b>22°</b><span>Madrid</span></div><div className="top-avatar">M</div></div></header>
+      <header className="topbar"><button className="mobile-menu-btn" onClick={() => setMobileMenu(true)} aria-label="Abrir menú"><Menu size={20}/></button><div className="crumb">Mi espacio <span>/</span> <b>{title}</b></div><div className="top-right"><span className={`sync-status ${cloudMode ? 'is-cloud' : ''}`}><Cloud size={15}/>{cloudMode ? 'Sincronizado' : 'Solo este dispositivo'}</span><span className="top-avatar">{session?.user?.email?.[0]?.toUpperCase() || 'O'}</span></div></header>
       <div className="page-content">
-        <section className="welcome-row"><div><div className="eyebrow">LUNES, 5 DE OCTUBRE <span>·</span> MADRID</div><h1>Hola, María <span className="wave">✳</span></h1><p>Hoy tienes plan. Del look nos encargamos nosotras.</p></div><button className="primary-button" onClick={()=>{document.getElementById('stylist')?.scrollIntoView({behavior:'smooth'})}}><Sparkles size={17}/> Crear un look</button></section>
-        <section className="hero" id="stylist"><div className="hero-photo"/><div className="hero-wash"/><div className="hero-content"><div className="hero-kicker"><Sparkles size={14}/> TU ESTILISTA PERSONAL</div><h2>¿Qué me pongo<br/>hoy?</h2><p>Tu armario tiene la respuesta.<br/>Nosotras te ayudamos a encontrarla.</p><div className="hero-bottom"><button className="hero-cta" onClick={()=>document.getElementById('look-builder')?.scrollIntoView({behavior:'smooth'})}>Encuentra tu look <ArrowUpRight size={16}/></button><div className="hero-rating"><div className="rating-dots"><i/><i/><i/></div><span>Looks que sí son tú</span></div></div></div><div className="hero-sticker"><Sparkles size={14}/><span>hecho para ti</span></div></section>
-        <section className="look-section" id="look-builder"><div className="section-heading"><div><div className="eyebrow blush">A TU MANERA</div><h2>Un look para tu plan</h2><p>Cuéntanos qué tienes y cómo te quieres sentir.</p></div><span className="step-count">01 <i>/ 03</i></span></div>
-          <div className="builder-card"><div className="builder-controls"><label className="field-label">¿A dónde vas?</label><div className="occasion-chips">{occasions.map(o=><button key={o} className={`occasion-chip ${occasion===o?'selected':''}`} onClick={()=>setOccasion(o)}>{o}</button>)}</div><div className="builder-divider"/><label className="field-label">¿Cómo quieres ir?</label><div className="vibe-field"><Sparkles size={17}/><input value={vibe} onChange={e=>setVibe(e.target.value)} aria-label="Describe tu estilo"/><button title="Sugerencia aleatoria" onClick={()=>setVibe(['Arreglada, pero sin esfuerzo','Cómoda y con un toque especial','Elegante sin parecer demasiado arreglada'][Math.floor(Math.random()*3)])}><RefreshCw size={16}/></button></div><div className="weather-line"><CloudSun size={18}/><span>Hoy en Madrid: <b>22° y soleado</b></span><span className="weather-sep">·</span><span>ideal para capas ligeras</span><button title="El tiempo"><ChevronDown size={15}/></button></div><button className="generate-button" onClick={makeLook}><Sparkles size={17}/> Crear mi look <ArrowUpRight size={16}/></button></div>
-            <div className="look-result"><div className="result-top"><span className="result-label"><span className="live-dot"/> TU LOOK DE HOY</span><button className={`heart-btn ${liked?'liked':''}`} onClick={()=>setLiked(!liked)} aria-label="Guardar look"><Heart size={19} fill={liked?'currentColor':'none'}/></button></div><div className="outfit-images">{currentOutfit.slice(0,3).map((item,i)=><div className={`outfit-image outfit-image-${i}`} key={item.id}><img src={photoSrc(item.image)} alt={item.name}/><span>{item.name}</span></div>)}</div><div className="outfit-copy"><div><h3>Un brunch con encanto</h3><p>{occasion} · {vibe || 'A tu estilo'}</p></div><button className="text-action" onClick={makeLook}>Otro look <RefreshCw size={15}/></button></div><div className="look-tip"><Sparkles size={14}/><span>El blazer arena le da ese punto especial al vaquero. Las bailarinas te llevan a cualquier parte.</span></div></div>
-          </div>
-        </section>
-        <section className="wardrobe-section"><div className="wardrobe-heading"><div><div className="eyebrow blush">TUS FAVORITOS, JUNTITOS</div><h2>Mi armario <span className="item-total">{items.length}</span></h2></div><div className="wardrobe-head-actions"><button className="outline-button tryon-entry" onClick={()=>{setTryOnItemId(tryOnItems[0]?.id ?? '');setShowTryOn(true)}}><Camera size={16}/> Probar en mí</button><button className="outline-button" onClick={()=>setShowAdd(true)}><Plus size={17}/> Añadir prenda</button></div></div><div className="wardrobe-toolbar"><div className="category-tabs">{categories.map(c=><button key={c} className={category===c?'current':''} onClick={()=>{setCategory(c);setShowAll(false)}}>{c}</button>)}</div><div className="toolbar-actions"><label className="search-box"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar en mi armario"/></label><button className="filter-btn"><SlidersHorizontal size={16}/><span>Filtrar</span></button></div></div><div className="item-grid">{visibleItems.map(item=><article className="wardrobe-item" key={item.id}><div className="item-photo"><img src={photoSrc(item.image)} alt={item.name}/><button className="item-heart" title="Guardar"><Heart size={15}/></button><span className="item-category">{item.category}</span></div><div className="item-info"><div><h3>{item.name}</h3><p>{item.brand} <span>·</span> {item.color}</p></div><button className="item-menu" aria-label="Eliminar prenda" onClick={()=>deleteItem(item.id)}><Trash2 size={15}/></button></div></article>)}</div>{filtered.length===0&&<div className="empty-state">No hay prendas en esta categoría todavía.</div>}{filtered.length>4&&<button className="see-all" onClick={()=>setShowAll(!showAll)}>{showAll?'Ver menos':'Ver las '+filtered.length+' prendas'} <ArrowUpRight size={15}/></button>}</section>
-        <footer><span>outfit check <span className="footer-heart">♥</span> hecho con estilo</span><span>Tu armario. Tus reglas.</span></footer>
+        {page === 'wardrobe' && <>
+          <section className="welcome-row"><div><div className="eyebrow">TU ESPACIO, A TU MANERA</div><h1>Mi armario</h1><p>Organiza tus prendas y crea combinaciones con lo que ya tienes.</p></div><button className="primary-button" disabled={!dataReady || busy} onClick={() => { setEditingItem(null); setShowEditor(true) }}><Plus size={17}/> Añadir prenda</button></section>
+          <section className="look-section">
+            <div className="section-heading"><div><div className="eyebrow blush">COMBINACIONES</div><h2>¿Qué te apetece ponerte?</h2><p>Elige un plan y genera una combinación a partir de tus prendas.</p></div></div>
+            <div className="builder-card"><div className="builder-controls">
+              <label className="field-label" htmlFor="occasion">Plan</label><select id="occasion" className="builder-select" value={occasion} onChange={event => setOccasion(event.target.value)}>{occasions.map(value => <option key={value}>{value}</option>)}</select>
+              <label className="field-label" htmlFor="mood">Cómo quieres sentirte</label><input id="mood" className="builder-input" value={mood} onChange={event => setMood(event.target.value)} maxLength={60} placeholder="Cómoda, elegante, informal…"/>
+              <button className="generate-button" disabled={!dataReady || !items.length} onClick={generateLook}><Sparkles size={17}/>{currentLook.length ? 'Probar otra combinación' : 'Crear una combinación'}</button>
+            </div><div className="look-result">
+              {currentLook.length ? <><div className="result-top"><span className="result-label"><span className="live-dot"/> COMBINACIÓN PARA {occasion.toLocaleUpperCase('es')}</span></div><div className="outfit-images">{currentLook.map(item => <div className="outfit-image" key={item.id}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={32}/>}<span>{item.name}</span></div>)}</div><div className="outfit-copy"><div><h3>{occasion}</h3><p>{mood || 'A tu estilo'} · {currentLook.length} {currentLook.length === 1 ? 'prenda' : 'prendas'}</p></div><button className="text-action" onClick={saveLook}><Heart size={15}/> Guardar</button></div></> : <div className="look-empty"><Sparkles size={25}/><b>{items.length ? 'Tu siguiente combinación aparecerá aquí' : 'Tu armario está listo para empezar'}</b><span>{items.length ? 'La app combinará al azar las prendas que has añadido.' : 'Añade prendas para poder crear combinaciones.'}</span></div>}
+            </div></div>
+          </section>
+          <section className="wardrobe-section"><div className="wardrobe-heading"><div><div className="eyebrow blush">TUS PRENDAS</div><h2>Armario <span className="item-total">{items.length}</span></h2></div></div>
+            <div className="wardrobe-toolbar"><div className="category-tabs"><button className={category === 'Todas' ? 'current' : ''} onClick={() => setCategory('Todas')}>Todas</button>{categories.map(value => <button key={value} className={category === value ? 'current' : ''} onClick={() => setCategory(value)}>{value}</button>)}</div><div className="toolbar-actions"><label className="search-box"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar prendas" aria-label="Buscar prendas"/></label><label className="sort-box"><ArrowDownUp size={14}/><select value={sort} onChange={event => setSort(event.target.value)} aria-label="Ordenar prendas"><option value="newest">Más recientes</option><option value="name">Nombre</option><option value="category">Categoría</option></select></label></div></div>
+            {busy && !dataReady ? <div className="empty-state">Cargando tus prendas…</div> : filteredItems.length ? <div className="item-grid">{filteredItems.map(item => <article className="wardrobe-item" key={item.id}><div className="item-photo">{item.image ? <img src={item.image} alt={item.name}/> : <div className="photo-placeholder"><Shirt size={32}/></div>}<span className="item-category">{item.category}</span></div><div className="item-info"><button className="item-edit" onClick={() => { setEditingItem(item); setShowEditor(true) }}><h3>{item.name}</h3><p>{[item.brand, item.color].filter(Boolean).join(' · ') || 'Sin detalles adicionales'}</p></button><button className="item-delete" aria-label={`Eliminar ${item.name}`} onClick={() => deleteItem(item)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Shirt size={25}/><b>{items.length ? 'No hay prendas con esos filtros' : 'Todavía no has añadido prendas'}</b><span>{items.length ? 'Prueba otra búsqueda o categoría.' : 'Añade la primera para empezar a organizar tu armario.'}</span>{!items.length && <button className="outline-button" onClick={() => { setEditingItem(null); setShowEditor(true) }}><Plus size={16}/> Añadir primera prenda</button>}</div>}
+          </section>
+        </>}
+
+        {page === 'looks' && <section className="content-panel"><div className="welcome-row"><div><div className="eyebrow blush">COMBINACIONES GUARDADAS</div><h1>Mis looks</h1><p>Guarda ideas para volver a ellas cuando las necesites.</p></div><button className="primary-button" onClick={() => { setPage('wardrobe'); if (!currentLook.length) generateLook() }}><Sparkles size={16}/> Crear un look</button></div>{looks.length ? <div className="saved-look-grid">{looks.map(look => <article className="saved-look-card" key={look.id}><div className="saved-look-images">{look.items.map((item, index) => <div className="saved-look-image" key={`${look.id}-${item.id}-${index}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={26}/>}<span>{item.name}</span></div>)}</div><div className="saved-look-copy"><div><span className="eyebrow blush">{look.occasion || 'LOOK GUARDADO'}</span><h2>{look.name}</h2><p>{look.mood || ''}{look.createdAt ? ` · ${new Date(look.createdAt).toLocaleDateString('es-ES')}` : ''}</p></div><button className="item-delete" aria-label={`Eliminar ${look.name}`} onClick={() => removeLook(look)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Heart size={25}/><b>Aún no has guardado ningún look</b><span>Crea una combinación en “Mi armario” y guárdala para verla aquí.</span><button className="outline-button" onClick={() => { setPage('wardrobe'); generateLook() }}><Sparkles size={16}/> Crear combinación</button></div>}</section>}
+
+        {page === 'profile' && <section className="content-panel profile-page"><div className="eyebrow blush">TU CUENTA</div><h1>Mi perfil</h1><p className="profile-intro">Gestiona tu sesión y cómo se guardan tus datos.</p><article className="profile-card"><div className="profile-card-icon"><UserRound size={22}/></div><div className="profile-card-main"><span className="eyebrow">CUENTA</span><h2>{session?.user?.email || 'Sin sesión iniciada'}</h2><p>{cloudMode ? 'Tus prendas y looks se sincronizan con Supabase.' : session ? 'Sesión abierta; la sincronización no está disponible ahora.' : supabase ? 'Inicia sesión para guardar y sincronizar tus datos en la nube.' : 'Tus datos se guardan solo en este navegador.'}</p></div>{session ? <button className="outline-button" onClick={async () => { const { error } = await supabase.auth.signOut(); if (error) flash(error.message); else flash('Sesión cerrada.') }}><LogOut size={16}/> Cerrar sesión</button> : supabase && <button className="outline-button" onClick={() => setShowLogin(true)}><LogIn size={16}/> Conectar cuenta</button>}</article><article className="profile-card"><div className="profile-card-icon"><Cloud size={22}/></div><div className="profile-card-main"><span className="eyebrow">ALMACENAMIENTO</span><h2>{cloudMode ? 'Armario sincronizado' : 'Guardado local'}</h2><p>{cloudMode ? 'Tu bucket de fotos es privado y la app usa enlaces temporales para mostrarlas.' : 'Las prendas y los looks permanecen en este dispositivo hasta que borres sus datos del navegador.'}</p></div>{session && !cloudMode && <button className="outline-button" onClick={() => { setAuthReady(false); window.setTimeout(() => setAuthReady(true), 0) }}>Reintentar conexión</button>}</article><article className="profile-card"><div className="profile-card-icon"><Download size={22}/></div><div className="profile-card-main"><span className="eyebrow">TUS DATOS</span><h2>Descargar una copia</h2><p>Exporta tus prendas y looks guardados como un archivo JSON.</p></div><button className="outline-button" onClick={exportWardrobe}><Download size={16}/> Descargar copia</button></article><div className="privacy-note"><b>Sobre tus imágenes</b><p>Las imágenes que añadas se guardan en este navegador o en el almacenamiento de tu proyecto Supabase. No se envían a servicios de generación de imágenes.</p></div></section>}
+        <footer><span>outfit check <span className="footer-heart">♥</span> tu armario, tus reglas</span><span>{cloudMode ? 'Sincronizado con tu cuenta' : 'Guardado en este dispositivo'}</span></footer>
       </div>
     </main>
-    {notice&&<div className="toast"><Check size={17}/>{notice}</div>}
-    {showAdd&&<div className="modal-backdrop" onClick={()=>setShowAdd(false)}><form className="add-modal" onSubmit={addItem} onClick={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={()=>setShowAdd(false)}><X size={19}/></button><div className="eyebrow blush">UNA NUEVA FAVORITA</div><h2>Añade una prenda</h2><p className="modal-sub">Vamos haciendo sitio a todo lo que te gusta.</p><label className="upload-zone"><Upload size={22}/><span>Sube una foto</span><small>JPG, PNG · máximo 10 MB</small><input type="file" name="photo" accept="image/*"/></label><label className="modal-label">¿Cómo se llama?<input name="name" placeholder="Ej. Camisa de lino" required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category"><option>Prendas</option><option>Zapatos</option><option>Bolsos</option><option>Accesorios</option></select></label><label className="modal-label">Color<input name="color" placeholder="Ej. Azul cielo"/></label></div><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" placeholder="Ej. COS"/></label><button className="generate-button modal-submit"><Plus size={17}/> Añadir a mi armario</button></form></div>}
-    {showLogin&&<div className="modal-backdrop" onClick={()=>setShowLogin(false)}><form className="add-modal login-modal" onSubmit={sendMagicLink} onClick={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={()=>setShowLogin(false)}><X size={19}/></button><div className="eyebrow blush">TU ARMARIO, CONTIGO</div><h2>Guarda tus prendas</h2><p className="modal-sub">Entra con tu email y tendrás tu armario en todos tus dispositivos.</p>{supabase?<><label className="modal-label">Tu email<input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="tu@email.com" required/></label><button className="generate-button modal-submit"><ArrowUpRight size={17}/> Enviarme un enlace de acceso</button></>:<><p className="login-setup">Para activar tu cuenta, añade la URL y la clave pública de Supabase en el archivo <code>.env</code>, ejecuta el esquema incluido y vuelve a abrir la app.</p><button type="button" className="generate-button modal-submit" onClick={()=>setShowLogin(false)}>Entendido</button></>}</form></div>}
-    {showTryOn&&<div className="modal-backdrop tryon-backdrop" onClick={()=>{if(!tryOnBusy){setShowTryOn(false);setTryOnResult('');setTryOnPhoto('')}}}><section className="tryon-modal" onClick={e=>e.stopPropagation()}><button type="button" className="modal-close" onClick={()=>{if(!tryOnBusy){setShowTryOn(false);setTryOnResult('');setTryOnPhoto('')}}}><X size={19}/></button><div className="eyebrow blush">EL ESPEJO VIRTUAL</div><h2>¿Cómo te queda?</h2><p className="modal-sub">Elige una prenda y sube una foto de cuerpo entero para verla puesta.</p>{tryOnResult?<div className="tryon-result"><img src={tryOnResult} alt="Resultado de la prueba virtual"/><button className="outline-button" onClick={()=>{setTryOnResult('');setTryOnConsent(false)}}><RefreshCw size={15}/> Probar otra prenda</button><p>Vista orientativa generada con IA; el ajuste y el color pueden diferir de la prenda real.</p></div>:<><label className="modal-label">Prenda de mi armario<select value={tryOnItem?.id ?? ''} onChange={e=>setTryOnItemId(e.target.value)}>{tryOnItems.map(item=><option key={item.id} value={item.id}>{item.name} · {item.color}</option>)}</select></label>{tryOnItem&&<div className="tryon-garment"><img src={photoSrc(tryOnItem.image)} alt=""/><div><b>{tryOnItem.name}</b><small>Mejor con una foto clara de la prenda</small></div></div>}<label className="tryon-upload"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={async e=>{const file=e.target.files?.[0];if(file){try{setTryOnPhoto(await compressPhoto(file));setTryOnResult('');setTryOnError('')}catch(error){setTryOnError(error.message)}}}}/><span className="tryon-upload-icon">{tryOnPhoto?<img src={tryOnPhoto} alt="Vista previa de tu foto"/>:<ImageUp size={23}/>}</span><span><b>{tryOnPhoto?'Cambiar mi foto':'Subir una foto de cuerpo entero'}</b><small>JPG, PNG o WebP. Centrada, con buena luz y la ropa visible.</small></span></label><div className="tryon-data-note">La generación usa FASHN: cuesta 1 crédito API por imagen (0,075 USD por uso; compra mínima de 100 créditos / 7,50 USD). Los créditos se compran por separado. Tu foto se envía temporalmente para procesarla; FASHN conserva metadatos de la solicitud y borra la copia de trabajo al terminar. Nosotros no guardamos ni tu foto ni el resultado. <a href="https://docs.fashn.ai/api-overview/data-retention-privacy" target="_blank" rel="noreferrer">Detalles de privacidad</a></div><label className="tryon-consent"><input type="checkbox" checked={tryOnConsent} onChange={e=>setTryOnConsent(e.target.checked)}/><span>Tengo permiso para usar esta foto y acepto enviarla a FASHN para generar la prueba virtual.</span></label>{tryOnError&&<div className="tryon-error">{tryOnError}</div>}<button className="generate-button tryon-submit" disabled={tryOnBusy||!tryOnPhoto||!tryOnItem} onClick={generateTryOn}>{tryOnBusy?<><LoaderCircle className="spinning" size={17}/> Creando tu prueba virtual…</>:<><Sparkles size={17}/> Probar esta prenda <span className="tryon-cost">1 crédito API</span></>}</button><p className="tryon-privacy">Puedes cerrar esta ventana para eliminar la foto y el resultado de la sesión. Límite: 3 intentos por día y cuenta.</p></>}</section></div>}
+    {notice && <div className="toast"><Check size={17}/>{notice}</div>}
+    {showEditor && <div className="modal-backdrop" onClick={() => setShowEditor(false)}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowEditor(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className="upload-zone"><Upload size={21}/><span>{editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>JPG, PNG o WebP · máximo 10 MB</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp"/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" defaultValue={editingItem?.category || 'Prendas'}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
+    {showLogin && <div className="modal-backdrop" onClick={() => setShowLogin(false)}><form className="add-modal" onSubmit={sendLoginLink} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowLogin(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">SINCRONIZACIÓN</div><h2>Conecta tu cuenta</h2><p className="modal-sub">Te enviaremos un enlace de acceso por correo.</p><label className="modal-label">Correo electrónico<input type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="tu@email.com" required/></label><button className="generate-button modal-submit"><LogIn size={16}/> Enviarme el enlace</button></form></div>}
   </div>
 }
 
