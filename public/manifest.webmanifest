@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Outfit Check — Tu armario personal",
+  "short_name": "Outfit Check",
+  "description": "Organiza tu armario, crea combinaciones y guarda tus looks.",
+  "lang": "es",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#fbf7f4",
+  "theme_color": "#fbf7f4",
+  "icons": [
+    { "src": "/icons/outfit-check-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/outfit-check-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/outfit-check.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

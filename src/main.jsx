@@ -97,6 +97,7 @@ function App() {
   const [authMode, setAuthMode] = useState('login')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [installPrompt, setInstallPrompt] = useState(null)
   const [showAuthCallback, setShowAuthCallback] = useState(hasAuthCallback)
   const [authCallbackStatus, setAuthCallbackStatus] = useState('processing')
   const [authCallbackError, setAuthCallbackError] = useState('')
@@ -109,6 +110,18 @@ function App() {
   const [currentLook, setCurrentLook] = useState([])
 
   const flash = message => { setNotice(message); window.setTimeout(() => setNotice(''), 3200) }
+
+  useEffect(() => {
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {})
+    const captureInstall = event => { event.preventDefault(); setInstallPrompt(event) }
+    const installed = () => setInstallPrompt(null)
+    window.addEventListener('beforeinstallprompt', captureInstall)
+    window.addEventListener('appinstalled', installed)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', captureInstall)
+      window.removeEventListener('appinstalled', installed)
+    }
+  }, [])
 
   useEffect(() => {
     if (!supabase) {
@@ -420,6 +433,18 @@ function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
+  const installApp = async () => {
+    if (!installPrompt) {
+      flash(/iPhone|iPad|iPod/i.test(navigator.userAgent)
+        ? 'En Safari, toca Compartir y elige “Añadir a pantalla de inicio”.'
+        : 'Abre el menú del navegador y elige “Instalar Outfit Check” o “Añadir a pantalla de inicio”.')
+      return
+    }
+    installPrompt.prompt()
+    await installPrompt.userChoice
+    setInstallPrompt(null)
+  }
+
   const navItems = [
     { id: 'wardrobe', label: 'Mi armario', icon: LayoutGrid },
     { id: 'looks', label: 'Mis looks', icon: Heart },
@@ -459,7 +484,7 @@ function App() {
 
         {page === 'looks' && <section className="content-panel"><div className="welcome-row"><div><div className="eyebrow blush">COMBINACIONES GUARDADAS</div><h1>Mis looks</h1><p>Guarda ideas para volver a ellas cuando las necesites.</p></div><button className="primary-button" onClick={() => { setPage('wardrobe'); if (!currentLook.length) generateLook() }}><Sparkles size={16}/> Crear un look</button></div>{looks.length ? <div className="saved-look-grid">{looks.map(look => <article className="saved-look-card" key={look.id}><div className="saved-look-images">{look.items.map((item, index) => <div className="saved-look-image" key={`${look.id}-${item.id}-${index}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={26}/>}<span>{item.name}</span></div>)}</div><div className="saved-look-copy"><div><span className="eyebrow blush">{look.occasion || 'LOOK GUARDADO'}</span><h2>{look.name}</h2><p>{look.mood || ''}{look.createdAt ? ` · ${new Date(look.createdAt).toLocaleDateString('es-ES')}` : ''}</p></div><button className="item-delete" aria-label={`Eliminar ${look.name}`} onClick={() => removeLook(look)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Heart size={25}/><b>Aún no has guardado ningún look</b><span>Crea una combinación en “Mi armario” y guárdala para verla aquí.</span><button className="outline-button" onClick={() => { setPage('wardrobe'); generateLook() }}><Sparkles size={16}/> Crear combinación</button></div>}</section>}
 
-        {page === 'profile' && <section className="content-panel profile-page"><div className="eyebrow blush">TU CUENTA</div><h1>Mi perfil</h1><p className="profile-intro">Gestiona tu sesión y cómo se guardan tus datos.</p><article className="profile-card"><div className="profile-card-icon"><UserRound size={22}/></div><div className="profile-card-main"><span className="eyebrow">CUENTA</span><h2>{session?.user?.email || 'Sin sesión iniciada'}</h2><p>{cloudMode ? 'Tus prendas y looks se sincronizan con Supabase.' : session?.user?.id === '__local_test__' ? 'Acceso de prueba local. Los datos solo se guardan en este navegador.' : session ? 'Sesión abierta; la sincronización no está disponible ahora.' : supabase ? 'Inicia sesión para guardar y sincronizar tus datos en la nube.' : 'Tus datos se guardan solo en este navegador.'}</p></div>{session ? <button className="outline-button" onClick={async () => { if (session.user.id === '__local_test__') { setSession(null); flash('Sesión de prueba cerrada.'); return }; const { error } = await supabase.auth.signOut(); if (error) flash(error.message); else flash('Sesión cerrada.') }}><LogOut size={16}/> Cerrar sesión</button> : supabase && <button className="outline-button" onClick={() => setShowLogin(true)}><LogIn size={16}/> Conectar cuenta</button>}</article><article className="profile-card"><div className="profile-card-icon"><Cloud size={22}/></div><div className="profile-card-main"><span className="eyebrow">ALMACENAMIENTO</span><h2>{cloudMode ? 'Armario sincronizado' : 'Guardado local'}</h2><p>{cloudMode ? 'Tu bucket de fotos es privado y la app usa enlaces temporales para mostrarlas.' : 'Las prendas y los looks permanecen en este dispositivo hasta que borres sus datos del navegador.'}</p></div>{session && !cloudMode && <button className="outline-button" onClick={() => { setAuthReady(false); window.setTimeout(() => setAuthReady(true), 0) }}>Reintentar conexión</button>}</article><article className="profile-card"><div className="profile-card-icon"><Download size={22}/></div><div className="profile-card-main"><span className="eyebrow">TUS DATOS</span><h2>Descargar una copia</h2><p>Exporta tus prendas y looks guardados como un archivo JSON.</p></div><button className="outline-button" onClick={exportWardrobe}><Download size={16}/> Descargar copia</button></article><div className="privacy-note"><b>Sobre tus imágenes</b><p>Las imágenes que añadas se guardan en este navegador o en el almacenamiento de tu proyecto Supabase. No se envían a servicios de generación de imágenes.</p></div></section>}
+        {page === 'profile' && <section className="content-panel profile-page"><div className="eyebrow blush">TU CUENTA</div><h1>Mi perfil</h1><p className="profile-intro">Gestiona tu sesión y cómo se guardan tus datos.</p><article className="profile-card"><div className="profile-card-icon"><UserRound size={22}/></div><div className="profile-card-main"><span className="eyebrow">CUENTA</span><h2>{session?.user?.email || 'Sin sesión iniciada'}</h2><p>{cloudMode ? 'Tus prendas y looks se sincronizan con Supabase.' : session?.user?.id === '__local_test__' ? 'Acceso de prueba local. Los datos solo se guardan en este navegador.' : session ? 'Sesión abierta; la sincronización no está disponible ahora.' : supabase ? 'Inicia sesión para guardar y sincronizar tus datos en la nube.' : 'Tus datos se guardan solo en este navegador.'}</p></div>{session ? <button className="outline-button" onClick={async () => { if (session.user.id === '__local_test__') { setSession(null); flash('Sesión de prueba cerrada.'); return }; const { error } = await supabase.auth.signOut(); if (error) flash(error.message); else flash('Sesión cerrada.') }}><LogOut size={16}/> Cerrar sesión</button> : supabase && <button className="outline-button" onClick={() => setShowLogin(true)}><LogIn size={16}/> Conectar cuenta</button>}</article><article className="profile-card"><div className="profile-card-icon"><Download size={22}/></div><div className="profile-card-main"><span className="eyebrow">APLICACIÓN</span><h2>Instala Outfit Check</h2><p>En ordenador usa Instalar en el menú de Chrome o Edge. En iPhone o iPad, abre esta página en Safari, toca Compartir y selecciona Añadir a pantalla de inicio.</p></div><button className="outline-button" onClick={installApp}><Download size={16}/> Instalar aplicación</button></article><article className="profile-card"><div className="profile-card-icon"><Cloud size={22}/></div><div className="profile-card-main"><span className="eyebrow">ALMACENAMIENTO</span><h2>{cloudMode ? 'Armario sincronizado' : 'Guardado local'}</h2><p>{cloudMode ? 'Tu bucket de fotos es privado y la app usa enlaces temporales para mostrarlas.' : 'Las prendas y los looks permanecen en este dispositivo hasta que borres sus datos del navegador.'}</p></div>{session && !cloudMode && <button className="outline-button" onClick={() => { setAuthReady(false); window.setTimeout(() => setAuthReady(true), 0) }}>Reintentar conexión</button>}</article><article className="profile-card"><div className="profile-card-icon"><Download size={22}/></div><div className="profile-card-main"><span className="eyebrow">TUS DATOS</span><h2>Descargar una copia</h2><p>Exporta tus prendas y looks guardados como un archivo JSON.</p></div><button className="outline-button" onClick={exportWardrobe}><Download size={16}/> Descargar copia</button></article><div className="privacy-note"><b>Sobre tus imágenes</b><p>Las imágenes que añadas se guardan en este navegador o en el almacenamiento de tu proyecto Supabase. No se envían a servicios de generación de imágenes.</p></div></section>}
         <footer><span>outfit check <span className="footer-heart">♥</span> tu armario, tus reglas</span><span>{cloudMode ? 'Sincronizado con tu cuenta' : 'Guardado en este dispositivo'}</span></footer>
       </div>
     </main>
