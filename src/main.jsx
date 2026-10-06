@@ -94,6 +94,9 @@ function App() {
   const [showLogin, setShowLogin] = useState(false)
   const [loginLinkSent, setLoginLinkSent] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
+  const [authMode, setAuthMode] = useState('login')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [showAuthCallback, setShowAuthCallback] = useState(hasAuthCallback)
   const [authCallbackStatus, setAuthCallbackStatus] = useState('processing')
   const [authCallbackError, setAuthCallbackError] = useState('')
@@ -119,9 +122,16 @@ function App() {
       return
     }
     let alive = true
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession)
       setAuthReady(true)
+      if (event === 'PASSWORD_RECOVERY') {
+        setAuthMode('update-password')
+        setPassword('')
+        setConfirmPassword('')
+        setShowLogin(true)
+        setShowAuthCallback(false)
+      }
     })
     const finishAuthCallback = async () => {
       const url = new URL(window.location.href)
@@ -359,9 +369,9 @@ function App() {
     flash(warning || 'Prenda eliminada.')
   }
 
-  const sendLoginLink = async event => {
+  const submitAuth = async event => {
     event.preventDefault()
-    if (import.meta.env.DEV) {
+    if (import.meta.env.DEV && authMode === 'login') {
       const testEmail = email.trim()
       if (!testEmail) return
       setSession({ user: { id: '__local_test__', email: testEmail } })
@@ -373,14 +383,30 @@ function App() {
     if (!supabase) return
     setLoginBusy(true)
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: { emailRedirectTo: window.location.origin, shouldCreateUser: true },
-      })
-      if (error) flash(`No se pudo enviar el enlace: ${error.message}`)
-      else setLoginLinkSent(true)
+      if (authMode === 'signup' || authMode === 'update-password') {
+        if (password.length < 8) { flash('La contraseña debe tener al menos 8 caracteres.'); return }
+        if (password !== confirmPassword) { flash('Las contraseñas no coinciden.'); return }
+      }
+      if (authMode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password, options: { emailRedirectTo: window.location.origin } })
+        if (error) flash(`No se pudo crear la cuenta: ${error.message}`)
+        else if (data.session) { setShowLogin(false); flash('Cuenta creada. Ya has iniciado sesión.') }
+        else { setLoginLinkSent(true); flash('Cuenta creada. Confirma el correo para completar el registro.') }
+      } else if (authMode === 'update-password') {
+        const { error } = await supabase.auth.updateUser({ password })
+        if (error) flash(`No se pudo guardar la contraseña: ${error.message}`)
+        else { setShowLogin(false); setAuthMode('login'); flash('Contraseña actualizada. Ya puedes iniciar sesión con ella.') }
+      } else if (authMode === 'recovery') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin })
+        if (error) flash(`No se pudo enviar la recuperación: ${error.message}`)
+        else setLoginLinkSent(true)
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+        if (error) flash(`No se pudo iniciar sesión: ${error.message}`)
+        else { setShowLogin(false); setPassword(''); flash('Sesión iniciada.') }
+      }
     } catch (error) {
-      flash(`No se pudo enviar el enlace: ${error.message || 'Comprueba tu conexión e inténtalo de nuevo.'}`)
+      flash(error.message || 'Comprueba tu conexión e inténtalo de nuevo.')
     } finally {
       setLoginBusy(false)
     }
@@ -449,7 +475,7 @@ function App() {
       {authCallbackStatus === 'error' && <div className="auth-callback-actions"><button className="generate-button" onClick={() => { setShowAuthCallback(false); setShowLogin(true) }}><LogIn size={16}/> Solicitar otro enlace</button><button className="text-action" onClick={() => setShowAuthCallback(false)}>Volver a la aplicación</button></div>}
     </section></div>}
     {showEditor && <div className="modal-backdrop" onClick={() => setShowEditor(false)}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowEditor(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className="upload-zone"><Upload size={21}/><span>{editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>JPG, PNG o WebP · máximo 10 MB</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp"/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" defaultValue={editingItem?.category || 'Prendas'}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
-    {showLogin && <div className="modal-backdrop" onClick={() => setShowLogin(false)}><form className="add-modal" onSubmit={sendLoginLink} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowLogin(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">ACCESO SIN CONTRASEÑA</div><h2>{loginLinkSent ? 'Revisa tu correo' : 'Iniciar sesión'}</h2><p className="modal-sub">{loginLinkSent ? <>Enviamos un enlace a <b>{email}</b>. Ábrelo para entrar; si es tu primera vez, también confirmará tu cuenta.</> : import.meta.env.DEV ? 'En desarrollo, el correo solo identifica tu prueba local; no se envía nada.' : 'Escribe tu correo y te enviaremos un enlace seguro para acceder.'}</p><label className="modal-label">Correo electrónico<input type="email" value={email} onChange={event => { setEmail(event.target.value); setLoginLinkSent(false) }} placeholder="tu@email.com" autoComplete="email" required/></label><button className="generate-button modal-submit" disabled={loginBusy}>{loginBusy ? 'Enviando…' : loginLinkSent ? 'Enviar otro enlace' : import.meta.env.DEV ? 'Entrar en modo prueba local' : 'Enviar enlace de acceso'}<LogIn size={16}/></button></form></div>}
+    {showLogin && <div className="modal-backdrop" onClick={() => setShowLogin(false)}><form className="add-modal" onSubmit={submitAuth} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowLogin(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">CUENTA OUTFIT CHECK</div><h2>{authMode === 'signup' ? 'Crear cuenta' : authMode === 'recovery' ? 'Recuperar contraseña' : authMode === 'update-password' ? 'Establecer contraseña' : 'Iniciar sesión'}</h2><p className="modal-sub">{loginLinkSent ? authMode === 'recovery' ? <>Te enviamos un enlace para restablecer la contraseña de <b>{email}</b>.</> : <>Te enviamos un correo a <b>{email}</b> para confirmar tu cuenta.</> : authMode === 'update-password' ? 'Elige una contraseña nueva para tu cuenta.' : authMode === 'recovery' ? 'Escribe el correo de tu cuenta y te enviaremos un enlace para cambiarla.' : authMode === 'signup' ? 'Crea tu cuenta con correo y una contraseña de al menos 8 caracteres.' : import.meta.env.DEV ? 'Modo de prueba local: al continuar se abrirá el armario en este navegador.' : 'Usa el correo con el que registraste tu cuenta y tu contraseña.'}</p>{authMode !== 'update-password' && <label className="modal-label">Correo electrónico<input type="email" value={email} onChange={event => { setEmail(event.target.value); setLoginLinkSent(false) }} placeholder="tu@email.com" autoComplete="email" required/></label>}{['login', 'signup', 'update-password'].includes(authMode) && <label className="modal-label">Contraseña<input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={8} required/></label>}{['signup', 'update-password'].includes(authMode) && <label className="modal-label">Repite la contraseña<input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} required/></label>}<button className="generate-button modal-submit" disabled={loginBusy || (loginLinkSent && authMode !== 'login')}>{loginBusy ? 'Un momento…' : loginLinkSent ? 'Correo enviado' : authMode === 'signup' ? 'Crear cuenta' : authMode === 'recovery' ? 'Enviar enlace de recuperación' : authMode === 'update-password' ? 'Guardar contraseña' : import.meta.env.DEV ? 'Entrar en modo prueba local' : 'Iniciar sesión'}<LogIn size={16}/></button>{authMode === 'login' && !import.meta.env.DEV && <button type="button" className="text-action" onClick={() => { setAuthMode('recovery'); setLoginLinkSent(false) }}>¿Olvidaste tu contraseña?</button>}{authMode === 'login' && <button type="button" className="text-action" onClick={() => { setAuthMode('signup'); setPassword(''); setConfirmPassword(''); setLoginLinkSent(false) }}>Crear una cuenta nueva</button>}{authMode !== 'login' && authMode !== 'update-password' && <button type="button" className="text-action" onClick={() => { setAuthMode('login'); setLoginLinkSent(false) }}>Volver a iniciar sesión</button>}</form></div>}
   </div>
 }
 
