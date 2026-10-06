@@ -36,6 +36,10 @@ La función comprime la foto del cuerpo en el navegador, la envía como base64 y
 
 ## Publicar en Vercel
 
-Importa el repositorio en [Vercel](https://vercel.com/), deja el comando de build como `npm run build` y el directorio de salida como `dist`. Añade `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` en Environment Variables. Después de desplegar, añade el dominio de Vercel a los redirect URLs de Supabase.
+Importa el repositorio en [Vercel](https://vercel.com/), deja el comando de build como `npm run build` y el directorio de salida como `dist`. La integración de Supabase para Vercel puede proporcionar `STORAGE_VITE_PUBLIC_SUPABASE_URL` y `STORAGE_VITE_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (también se acepta `STORAGE_VITE_PUBLIC_SUPABASE_ANON_KEY`). `vite.config.js` mapea esas dos variables públicas a la configuración que usa React durante la compilación. Para desarrollo local también se admiten los nombres `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
+
+No expongas `STORAGE_SUPABASE_SERVICE_ROLE_KEY`, `STORAGE_SUPABASE_SECRET_KEY`, secretos JWT ni credenciales Postgres al código del navegador. La app solo necesita la URL y la clave pública/publishable. La Edge Function desplegada en Supabase usa sus propios secretos de Supabase (`SUPABASE_URL`, `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY`), configurados en ese proyecto; las variables de Vercel no se transfieren a Supabase. La prueba virtual requiere además el secreto `FASHN_API_KEY` en Supabase.
+
+Después de desplegar, añade el dominio de Vercel a los redirect URLs de Supabase.
 
 La interfaz se adapta a escritorio, iPad y móvil. El primer prototipo genera combinaciones con prendas de ejemplo; el servicio de recomendaciones de clima y estilo todavía no está conectado a una API externa.
