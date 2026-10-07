@@ -18,8 +18,8 @@ Sin Supabase, las prendas y los looks se guardan en el almacenamiento local del 
 1. Crea un proyecto de Supabase.
 2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en SQL Editor. El esquema crea las tablas del armario y los looks, activa Row Level Security y configura el bucket privado `wardrobe-photos` con permisos de lectura, carga y borrado por carpeta de usuario.
 3. Configura las variables públicas del proyecto para el build:
-   - `STORAGE_VITE_PUBLIC_SUPABASE_URL`
-   - `STORAGE_VITE_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (o `STORAGE_VITE_PUBLIC_SUPABASE_ANON_KEY`)
+   - `STORAGE_SUPABASE_URL` (también se acepta `STORAGE_VITE_PUBLIC_SUPABASE_URL`)
+   - `STORAGE_SUPABASE_PUBLISHABLE_KEY` (o `STORAGE_SUPABASE_ANON_KEY`; también se aceptan los nombres `STORAGE_VITE_PUBLIC_SUPABASE_*`)
 4. En local también se aceptan `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`; puedes copiarlas en `.env`.
 5. Añade el origen local y el dominio publicado a Authentication → URL Configuration → Redirect URLs.
 
@@ -29,7 +29,7 @@ No pongas claves `service_role`/secret, el secreto JWT ni credenciales de Postgr
 
 ## Despliegue en Vercel
 
-Importa el repositorio y usa `npm run build` como comando de build y `dist` como directorio de salida. La configuración de Vite traduce las variables públicas `STORAGE_VITE_PUBLIC_SUPABASE_*` de la integración de Supabase a la configuración que usa la app.
+Importa el repositorio y usa `npm run build` como comando de build y `dist` como directorio de salida. La configuración de Vite traduce las variables públicas de la integración de Supabase a la configuración que usa la app.
 
 La aplicación no requiere funciones de servidor, claves de IA ni servicios meteorológicos.
 
