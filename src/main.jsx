@@ -59,22 +59,47 @@ const mapWardrobeRow = async row => {
     brand: row.brand || '', image, imagePath, createdAt: row.created_at,
   }
 }
-const toDataUrl = file => new Promise((resolve, reject) => {
+const MAX_PHOTO_SIZE = 10 * 1024 * 1024
+const TARGET_PHOTO_SIZE = 400 * 1024
+const toOptimizedPhoto = file => new Promise((resolve, reject) => {
   const reader = new FileReader()
   reader.onload = () => {
     const image = new Image()
     image.onerror = () => reject(new Error('El archivo no parece ser una imagen válida.'))
     image.onload = () => {
-      const scale = Math.min(1, 1440 / Math.max(image.width, image.height))
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale)
-      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height)
-      resolve(canvas.toDataURL('image/jpeg', 0.78))
+      const edgeSizes = [1400, 1200, 1000, 800]
+      const qualities = [0.78, 0.68, 0.58]
+      const encode = (edgeIndex, qualityIndex) => {
+        const maxEdge = edgeSizes[edgeIndex]
+        const scale = Math.min(1, maxEdge / Math.max(image.width, image.height))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(image.width * scale))
+        canvas.height = Math.max(1, Math.round(image.height * scale))
+        const context = canvas.getContext('2d')
+        if (!context) { reject(new Error('No se pudo procesar la imagen en este dispositivo.')); return }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height)
+        canvas.toBlob(blob => {
+          if (!blob) { reject(new Error('No se pudo procesar la imagen en este dispositivo.')); return }
+          if (blob.size <= TARGET_PHOTO_SIZE || (edgeIndex === edgeSizes.length - 1 && qualityIndex === qualities.length - 1)) {
+            resolve(blob)
+            return
+          }
+          if (qualityIndex < qualities.length - 1) encode(edgeIndex, qualityIndex + 1)
+          else encode(Math.min(edgeIndex + 1, edgeSizes.length - 1), 0)
+        }, 'image/jpeg', qualities[qualityIndex])
+      }
+      encode(0, 0)
     }
     image.src = reader.result
   }
   reader.onerror = () => reject(new Error('No se pudo leer la imagen.'))
   reader.readAsDataURL(file)
+})
+const toDataUrl = blob => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(reader.result)
+  reader.onerror = () => reject(new Error('No se pudo preparar la imagen para guardarla en este dispositivo.'))
+  reader.readAsDataURL(blob)
 })
 const shuffle = list => [...list].sort(() => Math.random() - 0.5)
 
@@ -314,16 +339,17 @@ function App() {
     let imagePath = editingItem?.imagePath || ''
     if (file?.size) {
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Usa una imagen JPG, PNG o WebP.')
-      if (file.size > 10 * 1024 * 1024) throw new Error('La imagen no puede superar los 10 MB.')
+      if (file.size > MAX_PHOTO_SIZE) throw new Error('La imagen no puede superar los 10 MB.')
+      const optimizedPhoto = await toOptimizedPhoto(file)
       if (cloudMode && session?.user) {
-        const path = `${session.user.id}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '-')}`
-        const { error: uploadError } = await supabase.storage.from('wardrobe-photos').upload(path, file, { upsert: false, contentType: file.type })
+        const path = `${session.user.id}/${crypto.randomUUID()}.jpg`
+        const { error: uploadError } = await supabase.storage.from('wardrobe-photos').upload(path, optimizedPhoto, { upsert: false, contentType: 'image/jpeg', cacheControl: '31536000' })
         if (uploadError) throw uploadError
         imagePath = path
         const { data: signedData, error: signedError } = await supabase.storage.from('wardrobe-photos').createSignedUrl(path, 60 * 60 * 24)
         if (signedError) throw signedError
         image = signedData.signedUrl
-      } else image = await toDataUrl(file)
+      } else image = await toDataUrl(optimizedPhoto)
     }
     const record = {
       name, category: itemCategory, color: String(form.get('color') || '').trim(),
@@ -499,7 +525,7 @@ function App() {
       {authCallbackStatus === 'success' && <button className="generate-button" disabled={!dataReady || busy} onClick={() => { setShowAuthCallback(false); setPage('wardrobe') }}>{busy ? 'Cargando tu armario…' : 'Entrar en mi armario'}<ArrowRight size={16}/></button>}
       {authCallbackStatus === 'error' && <div className="auth-callback-actions"><button className="generate-button" onClick={() => { setShowAuthCallback(false); setShowLogin(true) }}><LogIn size={16}/> Solicitar otro enlace</button><button className="text-action" onClick={() => setShowAuthCallback(false)}>Volver a la aplicación</button></div>}
     </section></div>}
-    {showEditor && <div className="modal-backdrop" onClick={() => setShowEditor(false)}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowEditor(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className="upload-zone"><Upload size={21}/><span>{editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>JPG, PNG o WebP · máximo 10 MB</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp"/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" defaultValue={editingItem?.category || 'Prendas'}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
+    {showEditor && <div className="modal-backdrop" onClick={() => setShowEditor(false)}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowEditor(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className="upload-zone"><Upload size={21}/><span>{editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>JPG, PNG o WebP · hasta 10 MB; se optimiza al guardar</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp"/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" defaultValue={editingItem?.category || 'Prendas'}>{categories.map(value => <option key={value}>{value}</option>)}</select></label><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
     {showLogin && <div className="modal-backdrop" onClick={() => setShowLogin(false)}><form className="add-modal" onSubmit={submitAuth} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowLogin(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">CUENTA OUTFIT CHECK</div><h2>{authMode === 'signup' ? 'Crear cuenta' : authMode === 'recovery' ? 'Recuperar contraseña' : authMode === 'update-password' ? 'Establecer contraseña' : 'Iniciar sesión'}</h2><p className="modal-sub">{loginLinkSent ? authMode === 'recovery' ? <>Te enviamos un enlace para restablecer la contraseña de <b>{email}</b>.</> : <>Te enviamos un correo a <b>{email}</b> para confirmar tu cuenta.</> : authMode === 'update-password' ? 'Elige una contraseña nueva para tu cuenta.' : authMode === 'recovery' ? 'Escribe el correo de tu cuenta y te enviaremos un enlace para cambiarla.' : authMode === 'signup' ? 'Crea tu cuenta con correo y una contraseña de al menos 8 caracteres.' : import.meta.env.DEV ? 'Modo de prueba local: al continuar se abrirá el armario en este navegador.' : 'Usa el correo con el que registraste tu cuenta y tu contraseña.'}</p>{authMode !== 'update-password' && <label className="modal-label">Correo electrónico<input type="email" value={email} onChange={event => { setEmail(event.target.value); setLoginLinkSent(false) }} placeholder="tu@email.com" autoComplete="email" required/></label>}{['login', 'signup', 'update-password'].includes(authMode) && <label className="modal-label">Contraseña<input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={8} required/></label>}{['signup', 'update-password'].includes(authMode) && <label className="modal-label">Repite la contraseña<input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} required/></label>}<button className="generate-button modal-submit" disabled={loginBusy || (loginLinkSent && authMode !== 'login')}>{loginBusy ? 'Un momento…' : loginLinkSent ? 'Correo enviado' : authMode === 'signup' ? 'Crear cuenta' : authMode === 'recovery' ? 'Enviar enlace de recuperación' : authMode === 'update-password' ? 'Guardar contraseña' : import.meta.env.DEV ? 'Entrar en modo prueba local' : 'Iniciar sesión'}<LogIn size={16}/></button>{authMode === 'login' && !import.meta.env.DEV && <button type="button" className="text-action" onClick={() => { setAuthMode('recovery'); setLoginLinkSent(false) }}>¿Olvidaste tu contraseña?</button>}{authMode === 'login' && <button type="button" className="text-action" onClick={() => { setAuthMode('signup'); setPassword(''); setConfirmPassword(''); setLoginLinkSent(false) }}>Crear una cuenta nueva</button>}{authMode !== 'login' && authMode !== 'update-password' && <button type="button" className="text-action" onClick={() => { setAuthMode('login'); setLoginLinkSent(false) }}>Volver a iniciar sesión</button>}</form></div>}
   </div>
 }
