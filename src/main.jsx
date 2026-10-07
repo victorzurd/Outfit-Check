@@ -351,7 +351,13 @@ function App() {
         if (uploadError) throw uploadError
         imagePath = path
         const { data: signedData, error: signedError } = await supabase.storage.from('wardrobe-photos').createSignedUrl(path, 60 * 60 * 24)
-        if (signedError) throw signedError
+        if (signedError) {
+          await supabase.storage.from('wardrobe-photos').remove([path])
+          if (/object not found/i.test(signedError.message || '')) {
+            throw new Error('Supabase no encuentra la foto o no permite leerla. Ejecuta supabase/schema.sql en el proyecto conectado y comprueba el bucket privado “wardrobe-photos” y su permiso de lectura para tu usuario.')
+          }
+          throw signedError
+        }
         image = signedData.signedUrl
       } else image = await toDataUrl(optimizedPhoto)
     }
