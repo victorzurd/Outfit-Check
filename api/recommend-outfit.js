@@ -2,11 +2,15 @@ import { requireUser, sendJson, parseModelJson } from '../server/ai-utils.js'
 
 const text = (value, max = 500) => String(value || '').slice(0, max)
 
-const preferenceContext = feedback => {
+const preferenceContext = (feedback, situation = {}) => {
   const groups = new Map()
+  let totalRatings = 0
+  let ratingTotal = 0
   for (const entry of feedback) {
     const rating = Number(entry?.rating)
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) continue
+    totalRatings += 1
+    ratingTotal += rating
     const temperatureC = entry.temperatureC !== null && entry.temperatureC !== undefined && entry.temperatureC !== '' && Number.isFinite(Number(entry.temperatureC)) ? Number(entry.temperatureC) : null
     const temperatureBand = temperatureC === null ? 'sin temperatura' : temperatureC < 10 ? 'frío (<10°C)' : temperatureC < 20 ? 'templado (10-19°C)' : temperatureC < 28 ? 'cálido (20-27°C)' : 'caluroso (28°C o más)'
     const context = {
@@ -36,15 +40,35 @@ const preferenceContext = feedback => {
       }
     }
   }
-  return [...groups.values()].map(group => {
+  const profiles = [...groups.values()].map(group => {
     const features = [...group.features.entries()].map(([feature, tally]) => ({ feature, ...tally }))
     return {
       occasion: group.occasion, season: group.season, temperatureBand: group.temperatureBand, mood: group.mood,
       ratingsCount: group.count, averageRating: Number((group.scoreTotal / group.count).toFixed(2)),
-      likedFeatures: features.filter(entry => entry.liked).sort((a, b) => b.liked - a.liked).slice(0, 8).map(entry => entry.feature),
-      dislikedFeatures: features.filter(entry => entry.disliked).sort((a, b) => b.disliked - a.disliked).slice(0, 8).map(entry => entry.feature),
+      likedFeatures: features.filter(entry => entry.liked).sort((a, b) => b.liked - a.liked).slice(0, 4).map(entry => entry.feature),
+      dislikedFeatures: features.filter(entry => entry.disliked).sort((a, b) => b.disliked - a.disliked).slice(0, 4).map(entry => entry.feature),
     }
   })
+  const overallFeatures = new Map()
+  for (const group of groups.values()) for (const [feature, tally] of group.features) {
+    const current = overallFeatures.get(feature) || { liked: 0, disliked: 0 }
+    current.liked += tally.liked
+    current.disliked += tally.disliked
+    overallFeatures.set(feature, current)
+  }
+  const targetTemperature = Number(situation.temperatureC)
+  const targetBand = !Number.isFinite(targetTemperature) ? '' : targetTemperature < 10 ? 'frío (<10°C)' : targetTemperature < 20 ? 'templado (10-19°C)' : targetTemperature < 28 ? 'cálido (20-27°C)' : 'caluroso (28°C o más)'
+  const relevance = profile => (profile.occasion === (text(situation.occasion, 60) || 'otra') ? 8 : 0)
+    + (profile.season === (text(situation.season, 30) || 'sin estación') ? 4 : 0)
+    + (profile.temperatureBand === targetBand && targetBand ? 2 : 0)
+  const sortedFeatures = [...overallFeatures.entries()].map(([feature, tally]) => ({ feature, ...tally }))
+  return {
+    ratingsCount: totalRatings,
+    averageRating: totalRatings ? Number((ratingTotal / totalRatings).toFixed(2)) : null,
+    overallLikedFeatures: sortedFeatures.filter(entry => entry.liked).sort((a, b) => b.liked - a.liked).slice(0, 6).map(entry => entry.feature),
+    overallDislikedFeatures: sortedFeatures.filter(entry => entry.disliked).sort((a, b) => b.disliked - a.disliked).slice(0, 6).map(entry => entry.feature),
+    similarSituations: profiles.sort((a, b) => relevance(b) - relevance(a) || b.ratingsCount - a.ratingsCount).slice(0, 3),
+  }
 }
 
 export default async function handler(req, res) {
@@ -58,6 +82,7 @@ export default async function handler(req, res) {
     const stage = req.body?.stage
     activeStage = stage || activeStage
     const stageInstructions = {
+      complete: 'Elige el outfit completo usando la lista entera. Debe incluir exactamente un Calzado y una prenda de Cuerpo completo O una Parte de arriba más una Parte de abajo. Puede llevar cero o un Bolso. Puede incluir varios Accesorios; máximo uno de Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos pueden repetirse. No combines Cuerpo completo con partes de arriba o abajo. Puedes añadir una capa de Parte de arriba al conjunto separado.',
       base: 'Elige exactamente UNA sola opción para iniciar el outfit: una Parte de arriba o una prenda de Cuerpo completo. Si eliges Cuerpo completo, no se añadirán partes de arriba ni de abajo.',
       bottom: 'Elige exactamente una Parte de abajo que combine con la parte de arriba ya elegida. No repitas ni sustituyas las prendas ya seleccionadas.',
       footwear: 'Elige exactamente un Calzado que combine con todas las prendas ya seleccionadas.',
@@ -74,6 +99,7 @@ export default async function handler(req, res) {
     })).filter(item => item.id && item.name && ['Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios'].includes(item.category))
     if (!wardrobe.length) return sendJson(res, 400, { error: 'No hay prendas válidas para combinar.' })
     const validStages = {
+      complete: () => true,
       base: item => ['Parte de arriba', 'Cuerpo completo'].includes(item.category),
       bottom: item => item.category === 'Parte de abajo',
       footwear: item => item.category === 'Calzado',
@@ -97,12 +123,12 @@ export default async function handler(req, res) {
     if (!apiKey) return sendJson(res, 500, { error: 'Añade GROQ_API_KEY a las variables de entorno de Vercel.' })
     const model = process.env.GROQ_MODEL || 'openai/gpt-oss-20b'
     const feedback = Array.isArray(req.body.feedback) ? req.body.feedback : []
-    const preferences = preferenceContext(feedback)
+    const preferences = preferenceContext(feedback, { occasion, season, temperatureC })
     const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model, temperature: 0.35, reasoning_effort: 'low', max_completion_tokens: 1200,
+        model, temperature: 0.35, reasoning_effort: 'low', max_completion_tokens: 400,
         messages: [
           { role: 'system', content: `Eres estilista personal y trabajas en la etapa "${stage}" de un outfit. Elige EXCLUSIVAMENTE IDs de candidates; no inventes ni repitas prendas. ${stageInstructions[stage]} Considera la situación, las prendas que ya se eligieron, comodidad, armonía de colores, estación, temperatura y formalidad. Usa las preferencias personales como guía para esta situación. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.` },
           { role: 'user', content: JSON.stringify({
@@ -146,6 +172,29 @@ export default async function handler(req, res) {
     const chosen = [...new Set(Array.isArray(parsed.itemIds) ? parsed.itemIds.map(String) : [])]
       .map(id => inventoryById.get(id)).filter(Boolean)
     let selected = []
+    if (stage === 'complete') {
+      const fullBody = chosen.find(item => item.category === 'Cuerpo completo')
+      const top = chosen.find(item => item.category === 'Parte de arriba')
+      const bottom = chosen.find(item => item.category === 'Parte de abajo')
+      const shoe = chosen.find(item => item.category === 'Calzado')
+      if (!shoe || (!fullBody && (!top || !bottom))) {
+        return sendJson(res, 502, { error: 'Groq no completó las prendas imprescindibles del outfit. Inténtalo otra vez.' })
+      }
+      selected = fullBody ? [fullBody] : [top, bottom]
+      selected.push(shoe)
+      if (!fullBody) selected.push(...chosen.filter(item => item.category === 'Parte de arriba' && item.id !== top.id))
+      const bag = chosen.find(item => item.category === 'Bolsos')
+      if (bag) selected.push(bag)
+      const accessoryCounts = new Map()
+      for (const accessory of chosen.filter(item => item.category === 'Accesorios')) {
+        const subtype = accessory.subcategory || 'Otros'
+        const count = accessoryCounts.get(subtype) || 0
+        if (!['Pulseras', 'Anillos'].includes(subtype) && count >= 1) continue
+        selected.push(accessory)
+        accessoryCounts.set(subtype, count + 1)
+      }
+      return sendJson(res, 200, { itemIds: selected.map(item => item.id), reason: text(parsed.reason, 300) })
+    }
     if (stage === 'base') selected = chosen.filter(item => ['Parte de arriba', 'Cuerpo completo'].includes(item.category)).slice(0, 1)
     if (stage === 'bottom') selected = chosen.filter(item => item.category === 'Parte de abajo').slice(0, 1)
     if (stage === 'footwear') selected = chosen.filter(item => item.category === 'Calzado').slice(0, 1)

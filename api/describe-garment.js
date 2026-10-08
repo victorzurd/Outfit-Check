@@ -8,14 +8,21 @@ export default async function handler(req, res) {
     const auth = await requireUser(req)
     if (auth.error) return sendJson(res, auth.status, { error: auth.error })
 
-    const { imageBase64, mimeType, category, subcategory, name } = req.body || {}
-    if (!allowedMimeTypes.has(mimeType) || typeof imageBase64 !== 'string' || imageBase64.length < 100 || imageBase64.length > 1_500_000) {
+    const { imageBase64, mimeType, category, subcategory, name, color, brand, description } = req.body || {}
+    const hasImage = typeof imageBase64 === 'string' && imageBase64.length > 0
+    if (hasImage && (!allowedMimeTypes.has(mimeType) || imageBase64.length < 100 || imageBase64.length > 1_500_000)) {
       return sendJson(res, 400, { error: 'La imagen no es válida o supera el tamaño permitido.' })
+    }
+    if (!hasImage && ![name, category, subcategory, description].some(value => String(value || '').trim())) {
+      return sendJson(res, 400, { error: 'Añade datos de la prenda para generar sus atributos.' })
     }
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) return sendJson(res, 500, { error: 'Añade GEMINI_API_KEY a las variables de entorno de Vercel.' })
 
-    const prompt = `Analiza exclusivamente la prenda u objeto de moda principal de la imagen para un armario personal. Devuelve SOLO un objeto JSON válido con estas claves: description (descripción detallada en español de lo visible, máximo 450 caracteres), color (color principal y secundarios visibles), pattern (estampado o "liso"), material (solo apariencia visual; usa "no identificable en la imagen" si no se puede saber), fit (corte/silueta visible), style (estilo), formality (uno de "informal", "smart casual", "formal", "deportivo", "fiesta", "desconocido"), seasons (array con estaciones adecuadas), confidence (número de 0 a 1). No inventes marca, composición textil ni características ocultas. Si la foto no permite afirmarlo, dilo claramente. Categoría elegida por la persona: ${String(category || '').slice(0, 40)}. Tipo elegido: ${String(subcategory || '').slice(0, 60)}. Nombre: ${String(name || '').slice(0, 80)}.`
+    const knownDetails = `Categoría: ${String(category || '').slice(0, 40)}. Tipo: ${String(subcategory || '').slice(0, 60)}. Nombre: ${String(name || '').slice(0, 80)}. Color indicado: ${String(color || '').slice(0, 80)}. Marca indicada: ${String(brand || '').slice(0, 60)}. Descripción aportada: ${String(description || '').slice(0, 450)}.`
+    const prompt = hasImage
+      ? `Analiza la prenda u objeto de moda principal de la foto para un armario personal. Devuelve SOLO JSON con estas claves: description (descripción detallada en español de lo visible, máximo 450 caracteres), color, pattern, material (solo apariencia visual; si no se identifica, dilo), fit, style, formality (informal, smart casual, formal, deportivo, fiesta o desconocido), seasons (array de estaciones adecuadas), confidence (0 a 1). No inventes marca ni composición textil. Si algo no se ve, indícalo. Usa también estos datos indicados por la persona: ${knownDetails}`
+      : `Genera atributos útiles para combinar esta prenda en un armario personal usando los datos aportados y conocimiento general sobre el tipo de prenda. Devuelve SOLO JSON con estas claves: description (descripción en español, máximo 450 caracteres; distingue lo indicado de lo inferido), color, pattern, material, fit, style, formality (informal, smart casual, formal, deportivo, fiesta o desconocido), seasons (array de estaciones adecuadas), confidence (0 a 1). No inventes composición textil, color, marca ni detalles concretos que no se hayan indicado. Puedes inferir usos, silueta y estilo habituales del tipo de prenda, expresando incertidumbre cuando corresponda. Si un atributo no se puede inferir, usa "desconocido" o un array vacío. Datos de la prenda: ${knownDetails}`
 
     const models = [...new Set([
       process.env.GEMINI_MODEL || 'gemini-3.8-flash',
@@ -30,7 +37,7 @@ export default async function handler(req, res) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
           body: JSON.stringify({
-            contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: imageBase64 } }, { text: prompt }] }],
+            contents: [{ parts: [...(hasImage ? [{ inline_data: { mime_type: mimeType, data: imageBase64 } }] : []), { text: prompt }] }],
             generationConfig: {
               responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 700,
               ...(!model.includes('flash-lite') ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
@@ -67,6 +74,7 @@ export default async function handler(req, res) {
       formality: String(parsed.formality || 'desconocido').slice(0, 40),
       seasons: Array.isArray(parsed.seasons) ? parsed.seasons.map(value => String(value).slice(0, 30)).slice(0, 4) : [],
       confidence: Number.isFinite(Number(parsed.confidence)) ? Math.max(0, Math.min(1, Number(parsed.confidence))) : null,
+      source: hasImage ? 'gemini-photo' : 'gemini-text-inference',
     }
     return sendJson(res, 200, { description: parsed.description.trim().slice(0, 450), color: String(parsed.color || '').slice(0, 100), attributes })
   } catch (error) {

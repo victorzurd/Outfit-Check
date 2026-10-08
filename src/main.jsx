@@ -152,6 +152,70 @@ const toDataUrl = blob => new Promise((resolve, reject) => {
   reader.readAsDataURL(blob)
 })
 const shuffle = list => [...list].sort(() => Math.random() - 0.5)
+const normalizeMatchText = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
+const shortlistAiCandidates = (candidates, stage, situation, selected, feedback) => {
+  const limits = { base: 8, bottom: 6, footwear: 6, extras: 8 }
+  const preferenceScores = new Map()
+  for (const entry of feedback) {
+    const rating = Number(entry.rating)
+    if (!Number.isFinite(rating) || rating === 3) continue
+    const weight = (entry.occasion === situation.occasion ? 2 : 1) + (situation.season && entry.season === situation.season ? 1 : 0)
+    const value = (rating - 3) * weight
+    for (const item of entry.outfit || entry.outfit_snapshot || entry.outfitSnapshot || []) {
+      const attrs = item.attributes || item
+      const features = [
+        item.category && item.subcategory ? `type:${normalizeMatchText(item.category)}:${normalizeMatchText(item.subcategory)}` : '',
+        item.color ? `color:${normalizeMatchText(item.color)}` : '',
+        attrs.style ? `style:${normalizeMatchText(attrs.style)}` : '',
+        attrs.pattern ? `pattern:${normalizeMatchText(attrs.pattern)}` : '',
+        attrs.formality ? `formality:${normalizeMatchText(attrs.formality)}` : '',
+      ].filter(Boolean)
+      for (const feature of features) preferenceScores.set(feature, (preferenceScores.get(feature) || 0) + value)
+    }
+  }
+  const contextWords = normalizeMatchText(`${situation.occasion} ${situation.mood}`).split(/[^a-z0-9]+/).filter(word => word.length > 3)
+  const scored = candidates.map(item => {
+    const attrs = item.aiAttributes || item.attributes || {}
+    const seasonNames = (attrs.seasons || []).map(normalizeMatchText)
+    let score = 0
+    if (situation.season && seasonNames.includes(normalizeMatchText(situation.season))) score += 4
+    if (Number.isFinite(Number(situation.temperatureC)) && seasonNames.length) {
+      const expectedSeason = Number(situation.temperatureC) < 10 ? 'invierno' : Number(situation.temperatureC) > 25 ? 'verano' : ''
+      if (expectedSeason && seasonNames.includes(expectedSeason)) score += 2
+    }
+    const styleText = normalizeMatchText(`${attrs.style || ''} ${attrs.formality || ''} ${item.description || ''}`)
+    score += contextWords.filter(word => styleText.includes(word)).length * 1.5
+    const itemFeatures = [
+      item.category && item.subcategory ? `type:${normalizeMatchText(item.category)}:${normalizeMatchText(item.subcategory)}` : '',
+      item.color ? `color:${normalizeMatchText(item.color)}` : '',
+      attrs.style ? `style:${normalizeMatchText(attrs.style)}` : '',
+      attrs.pattern ? `pattern:${normalizeMatchText(attrs.pattern)}` : '',
+      attrs.formality ? `formality:${normalizeMatchText(attrs.formality)}` : '',
+    ].filter(Boolean)
+    score += itemFeatures.reduce((total, feature) => total + (preferenceScores.get(feature) || 0), 0)
+    const color = normalizeMatchText(item.color)
+    if (selected.some(chosen => color && normalizeMatchText(chosen.color) === color)) score += 0.5
+    return { item, score, tie: Math.random() }
+  }).sort((a, b) => b.score - a.score || a.tie - b.tie)
+
+  const groups = new Map()
+  for (const entry of scored) {
+    const key = `${entry.item.category}|${entry.item.subcategory || 'Otros'}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(entry.item)
+  }
+  const pools = [...groups.values()]
+  const shortlist = []
+  while (shortlist.length < limits[stage] && pools.some(pool => pool.length)) {
+    for (const pool of pools) if (pool.length && shortlist.length < limits[stage]) shortlist.push(pool.shift())
+  }
+  return shortlist
+}
+const compactAiItem = item => ({
+  id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
+  color: item.color || '', description: String(item.description || '').slice(0, 180),
+  attributes: Object.fromEntries(['style', 'pattern', 'formality', 'seasons', 'fit'].filter(key => (item.aiAttributes || item.attributes)?.[key] != null).map(key => [key, (item.aiAttributes || item.attributes)[key]])),
+})
 
 function App() {
   const [page, setPage] = useState('wardrobe')
@@ -160,6 +224,7 @@ function App() {
   const [feedback, setFeedback] = useState(() => readFeedback())
   const [feedCards, setFeedCards] = useState([])
   const [feedLoading, setFeedLoading] = useState(false)
+  const [savingFeedCardId, setSavingFeedCardId] = useState(null)
   const feedContainerRef = useRef(null)
   const [session, setSession] = useState(null)
   const [authReady, setAuthReady] = useState(!supabase)
@@ -410,21 +475,30 @@ function App() {
   }))
 
   const recommendOutfitWithAI = async situation => {
-    const inventory = items.map(item => ({
-      id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
-      color: item.color || '', description: item.description || '', attributes: item.aiAttributes || {},
-    }))
+    const inventory = items.map(compactAiItem)
+    const feedback = feedbackForAI()
+    const resolveIds = data => (Array.isArray(data.itemIds) ? data.itemIds : [])
+      .map(String).map(id => items.find(item => String(item.id) === id)).filter(Boolean)
+    if (inventory.length <= 30) {
+      const data = await callAiEndpoint('recommend-outfit', {
+        stage: 'complete', inventory, selectedItems: [],
+        occasion: situation.occasion, mood: situation.mood,
+        temperatureC: situation.temperatureC, season: situation.season, feedback,
+      })
+      return { items: resolveIds(data), reason: data.reason || '' }
+    }
     const selected = []
     const reasons = []
     const chooseStage = async (stage, allowedCategories, optional = false) => {
-      const candidates = inventory.filter(item => allowedCategories.includes(item.category))
-      if (!candidates.length && optional) return []
-      if (!candidates.length) throw new Error('No hay prendas disponibles para completar este outfit.')
+      const allCandidates = inventory.filter(item => allowedCategories.includes(item.category))
+      if (!allCandidates.length && optional) return []
+      if (!allCandidates.length) throw new Error('No hay prendas disponibles para completar este outfit.')
+      const candidates = shortlistAiCandidates(allCandidates, stage, situation, selected, feedback)
       const data = await callAiEndpoint('recommend-outfit', {
-        stage, inventory: candidates, selectedItems: selected,
+        stage, inventory: candidates, selectedItems: selected.map(compactAiItem),
         occasion: situation.occasion, mood: situation.mood,
         temperatureC: situation.temperatureC, season: situation.season,
-        feedback: feedbackForAI(),
+        feedback,
       })
       const candidateIds = new Set(candidates.map(item => item.id))
       const stageItems = [...new Set((Array.isArray(data.itemIds) ? data.itemIds : []).map(String))]
@@ -440,7 +514,7 @@ function App() {
     if (base[0].category === 'Parte de arriba') await chooseStage('bottom', ['Parte de abajo'])
     await chooseStage('footwear', ['Calzado'])
     await chooseStage('extras', ['Bolsos', 'Accesorios'], true)
-    return { items: selected.map(item => items.find(wardrobeItem => String(wardrobeItem.id) === item.id)).filter(Boolean), reason: reasons.join(' ') }
+    return { items: resolveIds({ itemIds: selected.map(item => item.id) }), reason: reasons.join(' ') }
   }
 
   const generateLook = async () => {
@@ -469,13 +543,8 @@ function App() {
       const recent = new Set(feedCards.slice(-3).map(card => `${card.occasion}|${card.season}`))
       const moments = inspirationMoments.filter(moment => !recent.has(`${moment.occasion}|${moment.season}`))
       const moment = shuffle(moments.length ? moments : inspirationMoments)[0]
-      let selected
-      let reason = ''
-      if (cloudMode && session?.user) {
-        const result = await recommendOutfitWithAI(moment)
-        selected = result.items
-        reason = result.reason
-      } else selected = chooseRandomItems()
+      const selected = chooseRandomItems()
+      const reason = 'Combinación aleatoria de tu armario para este momento.'
       if (!selected?.length) throw new Error('No se encontró un outfit con prendas válidas.')
       setFeedCards(previous => [...previous, {
         id: crypto.randomUUID(), ...moment, items: selected, reason, rating: null, createdAt: new Date().toISOString(),
@@ -504,22 +573,36 @@ function App() {
     setFeedCards(previous => previous.map(entry => entry.id === card.id ? { ...entry, rating } : entry))
   }
 
-  const saveLook = async () => {
-    if (!currentLook.length) return
+  const saveLookItems = async (lookItems, lookOccasion, lookMood, name = `${lookOccasion} · ${new Date().toLocaleDateString('es-ES')}`) => {
+    if (!lookItems.length) return false
     const look = {
-      id: crypto.randomUUID(), name: `${occasion} · ${new Date().toLocaleDateString('es-ES')}`,
-      occasion, mood, items: currentLook, createdAt: new Date().toISOString(),
+      id: crypto.randomUUID(), name, occasion: lookOccasion, mood: lookMood,
+      items: lookItems, createdAt: new Date().toISOString(),
     }
     if (cloudMode && session?.user) {
       const { data, error } = await supabase.from('saved_outfits').insert({
-        user_id: session.user.id, name: look.name, occasion, mood,
-        item_ids: currentLook.map(item => item.id),
+        user_id: session.user.id, name: look.name, occasion: lookOccasion, mood: lookMood,
+        item_ids: lookItems.map(item => item.id),
       }).select().single()
-      if (error) { flash(`No se pudo guardar el look: ${error.message}`); return }
+      if (error) { flash(`No se pudo guardar el look: ${error.message}`); return false }
       look.id = data.id
     }
     setLooks(previous => [look, ...previous])
     flash('Look guardado.')
+    return true
+  }
+
+  const saveLook = () => saveLookItems(currentLook, occasion, mood)
+
+  const saveInspirationLook = async card => {
+    if (card.saved || savingFeedCardId) return
+    setSavingFeedCardId(card.id)
+    try {
+      const name = `${card.occasion} · ${card.season} · ${card.temperatureC}°C`
+      const saved = await saveLookItems(card.items, card.occasion, card.mood, name)
+      if (saved) setFeedCards(previous => previous.map(entry => entry.id === card.id ? { ...entry, saved: true } : entry))
+    } catch (error) { flash(`No se pudo guardar el look: ${error.message || 'inténtalo de nuevo.'}`) }
+    finally { setSavingFeedCardId(null) }
   }
 
   const removeLook = async look => {
@@ -550,7 +633,10 @@ function App() {
       if (cloudMode && session?.user) {
         const dataUrl = await toDataUrl(optimizedPhoto)
         const imageBase64 = String(dataUrl).split(',')[1]
-        const data = await callAiEndpoint('describe-garment', { imageBase64, mimeType: 'image/jpeg', category: itemCategory, subcategory: itemSubcategory, name })
+        const data = await callAiEndpoint('describe-garment', {
+          imageBase64, mimeType: 'image/jpeg', category: itemCategory, subcategory: itemSubcategory, name,
+          color: String(form.get('color') || '').trim(), brand: String(form.get('brand') || '').trim(), description,
+        })
         description = data.description || description
         aiAttributes = data.attributes || aiAttributes
         aiColor = data.color || ''
@@ -572,6 +658,20 @@ function App() {
         }
         image = signedData.signedUrl
       } else image = await toDataUrl(optimizedPhoto)
+    }
+    const inferenceInputsChanged = editingItem && (
+      itemCategory !== editingItem.category || itemSubcategory !== (editingItem.subcategory || '') ||
+      name !== editingItem.name || String(form.get('color') || '').trim() !== (editingItem.color || '') ||
+      String(form.get('brand') || '').trim() !== (editingItem.brand || '') || description !== (editingItem.description || '')
+    )
+    if (cloudMode && session?.user && !file?.size && (!editingItem || !Object.keys(editingItem.aiAttributes || {}).length || inferenceInputsChanged)) {
+      const data = await callAiEndpoint('describe-garment', {
+        category: itemCategory, subcategory: itemSubcategory, name,
+        color: String(form.get('color') || '').trim(), brand: String(form.get('brand') || '').trim(), description,
+      })
+      description = data.description || description
+      aiAttributes = data.attributes || aiAttributes
+      aiColor = data.color || ''
     }
     const record = {
       name, category: itemCategory, subcategory: itemSubcategory, description, aiAttributes,
@@ -732,7 +832,7 @@ function App() {
           </section>
         </>}
 
-        {page === 'inspiration' && <section className="content-panel inspiration-page"><div className="inspiration-heading"><div><div className="eyebrow blush">TU PRÓXIMA IDEA</div><h1>Inspiración</h1><p>Descubre outfits para momentos distintos y puntúa los que más van contigo.</p></div><div className="inspiration-heading-actions"><span>{feedback.length} valoraciones</span><button className="primary-button" onClick={loadInspirationCard} disabled={feedLoading || !items.length}><Sparkles size={16}/>{feedLoading ? 'Creando…' : 'Siguiente outfit'}</button></div></div>{!items.length ? <div className="empty-state"><Shirt size={26}/><b>Primero llena tu armario</b><span>Añade algunas prendas para descubrir combinaciones para la universidad, una cena, un viaje y más.</span><button className="outline-button" onClick={() => setPage('wardrobe')}><LayoutGrid size={16}/> Ir a mi armario</button></div> : <div className="inspiration-feed" ref={feedContainerRef}>{feedCards.map((card, cardIndex) => <article className="inspiration-card" key={card.id}><div className="inspiration-card-media"><div className="inspiration-photo-grid">{card.items.map(item => <div className="inspiration-photo" key={`${card.id}-${item.id}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={36}/>}<span>{item.name}</span></div>)}</div><div className="inspiration-vignette"/><div className="inspiration-card-count">{String(cardIndex + 1).padStart(2, '0')} · LOOK</div><div className="inspiration-rating" aria-label="Puntúa este outfit">{[5, 4, 3, 2, 1].map(score => <button key={score} className={card.rating >= score ? 'rated' : ''} title={`${score} de 5`} aria-label={`Puntuar con ${score} de 5`} onClick={() => rateInspirationCard(card, score)}><Star size={20} fill={card.rating >= score ? 'currentColor' : 'none'}/><small>{score}</small></button>)}</div></div><div className="inspiration-card-copy"><div className="inspiration-context"><span>{card.occasion}</span><span><Thermometer size={14}/>{card.temperatureC}°C</span><span>{card.season}</span></div><div className="eyebrow blush">{card.moment}</div><h2>{card.mood}</h2><p className="inspiration-reason">{card.reason || 'Una propuesta creada a partir de las prendas de tu armario.'}</p><div className="inspiration-item-list">{card.items.map(item => <span key={`${card.id}-tag-${item.id}`}>{item.subcategory || item.category} · {item.name}</span>)}</div><div className="inspiration-card-footer">{card.rating ? <span>Tu puntuación: <b>{card.rating}/5</b> · Se tendrá en cuenta para situaciones parecidas.</span> : <span>¿Te lo pondrías? Tu valoración ayudará a personalizar futuras ideas.</span>}<button className="text-action" onClick={loadInspirationCard} disabled={feedLoading}>{feedLoading ? 'Preparando…' : 'Siguiente'}<ArrowRight size={15}/></button></div></div></article>)}{!feedCards.length && feedLoading && <div className="empty-state">Preparando tu primer outfit…</div>}</div>}</section>}
+        {page === 'inspiration' && <section className="content-panel inspiration-page"><div className="inspiration-heading"><div><div className="eyebrow blush">TU PRÓXIMA IDEA</div><h1>Inspiración</h1><p>Descubre outfits para momentos distintos y puntúa los que más van contigo.</p></div><div className="inspiration-heading-actions"><span>{feedback.length} valoraciones</span><button className="primary-button" onClick={loadInspirationCard} disabled={feedLoading || !items.length}><Sparkles size={16}/>{feedLoading ? 'Creando…' : 'Siguiente outfit'}</button></div></div>{!items.length ? <div className="empty-state"><Shirt size={26}/><b>Primero llena tu armario</b><span>Añade algunas prendas para descubrir combinaciones para la universidad, una cena, un viaje y más.</span><button className="outline-button" onClick={() => setPage('wardrobe')}><LayoutGrid size={16}/> Ir a mi armario</button></div> : <div className="inspiration-feed" ref={feedContainerRef}>{feedCards.map((card, cardIndex) => <article className="inspiration-card" key={card.id}><div className="inspiration-card-media"><div className="inspiration-photo-grid">{card.items.map(item => <div className="inspiration-photo" key={`${card.id}-${item.id}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={36}/>}<span>{item.name}</span></div>)}</div><div className="inspiration-vignette"/><div className="inspiration-card-count">{String(cardIndex + 1).padStart(2, '0')} · LOOK</div><div className="inspiration-rating" aria-label="Puntúa este outfit">{[5, 4, 3, 2, 1].map(score => <button key={score} className={card.rating >= score ? 'rated' : ''} title={`${score} de 5`} aria-label={`Puntuar con ${score} de 5`} onClick={() => rateInspirationCard(card, score)}><Star size={20} fill={card.rating >= score ? 'currentColor' : 'none'}/><small>{score}</small></button>)}</div></div><div className="inspiration-card-copy"><div className="inspiration-context"><span>{card.occasion}</span><span><Thermometer size={14}/>{card.temperatureC}°C</span><span>{card.season}</span></div><div className="eyebrow blush">{card.moment}</div><h2>{card.mood}</h2><p className="inspiration-reason">{card.reason || 'Una propuesta creada a partir de las prendas de tu armario.'}</p><div className="inspiration-item-list">{card.items.map(item => <span key={`${card.id}-tag-${item.id}`}>{item.subcategory || item.category} · {item.name}</span>)}</div><div className="inspiration-card-footer">{card.rating ? <span>Tu puntuación: <b>{card.rating}/5</b> · Se tendrá en cuenta para situaciones parecidas.</span> : <span>¿Te lo pondrías? Tu valoración ayudará a personalizar futuras ideas.</span>}<div className="inspiration-card-actions"><button className={`text-action${card.saved ? ' saved' : ''}`} onClick={() => saveInspirationLook(card)} disabled={card.saved || savingFeedCardId === card.id}>{savingFeedCardId === card.id ? 'Guardando…' : card.saved ? 'Guardado' : 'Favorito'}<Heart size={15} fill={card.saved ? 'currentColor' : 'none'}/></button><button className="text-action" onClick={loadInspirationCard} disabled={feedLoading}>{feedLoading ? 'Preparando…' : 'Siguiente'}<ArrowRight size={15}/></button></div></div></div></article>)}{!feedCards.length && feedLoading && <div className="empty-state">Preparando tu primer outfit…</div>}</div>}</section>}
 
         {page === 'looks' && <section className="content-panel"><div className="welcome-row"><div><div className="eyebrow blush">COMBINACIONES GUARDADAS</div><h1>Mis looks</h1><p>Guarda ideas para volver a ellas cuando las necesites.</p></div><button className="primary-button" onClick={() => { setPage('wardrobe'); if (!currentLook.length) generateLook() }}><Sparkles size={16}/> Crear un look</button></div>{looks.length ? <div className="saved-look-grid">{looks.map(look => <article className="saved-look-card" key={look.id}><div className="saved-look-images">{look.items.map((item, index) => <div className="saved-look-image" key={`${look.id}-${item.id}-${index}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={26}/>}<span>{item.name}</span></div>)}</div><div className="saved-look-copy"><div><span className="eyebrow blush">{look.occasion || 'LOOK GUARDADO'}</span><h2>{look.name}</h2><p>{look.mood || ''}{look.createdAt ? ` · ${new Date(look.createdAt).toLocaleDateString('es-ES')}` : ''}</p></div><button className="item-delete" aria-label={`Eliminar ${look.name}`} onClick={() => removeLook(look)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Heart size={25}/><b>Aún no has guardado ningún look</b><span>Crea una combinación en “Mi armario” y guárdala para verla aquí.</span><button className="outline-button" onClick={() => { setPage('wardrobe'); generateLook() }}><Sparkles size={16}/> Crear combinación</button></div>}</section>}
 
@@ -751,7 +851,7 @@ function App() {
       {authCallbackStatus === 'success' && <button className="generate-button" disabled={!dataReady || busy} onClick={() => { setShowAuthCallback(false); setPage('wardrobe') }}>{busy ? 'Cargando tu armario…' : 'Entrar en mi armario'}<ArrowRight size={16}/></button>}
       {authCallbackStatus === 'error' && <div className="auth-callback-actions"><button className="generate-button" onClick={() => { setShowAuthCallback(false); setShowLogin(true) }}><LogIn size={16}/> Solicitar otro enlace</button><button className="text-action" onClick={() => setShowAuthCallback(false)}>Volver a la aplicación</button></div>}
     </section></div>}
-    {showEditor && <div className="modal-backdrop" onClick={() => { setShowEditor(false); setPhotoPreview(''); setPhotoName('') }}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); setPhotoPreview(''); setPhotoName(''); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => { setShowEditor(false); setPhotoPreview(''); setPhotoName('') }} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className={`upload-zone${photoPreview ? ' has-photo' : ''}`}>{photoPreview ? <img className="upload-preview" src={photoPreview} alt="Vista previa de la foto seleccionada"/> : <Upload size={21}/>}<span>{photoName ? 'Foto seleccionada · completa el formulario para guardarla' : editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>{photoName || 'JPG, PNG o WebP · hasta 10 MB; se optimiza al guardar'}</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => { const file = event.target.files?.[0]; setPhotoPreview(file ? URL.createObjectURL(file) : ''); setPhotoName(file?.name || '') }}/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" value={editorCategory} onChange={event => { const nextCategory = event.target.value; setEditorCategory(nextCategory); setEditorSubcategory(defaultSubcategory(nextCategory)) }}>{categories.map(value => <option key={value}>{value}</option>)}</select></label></div>{itemTypes[editorCategory] && <label className="modal-label">{editorCategory === 'Accesorios' ? 'Tipo de accesorio' : editorCategory === 'Calzado' ? 'Tipo de calzado' : 'Tipo de prenda'}<select name="subcategory" value={editorSubcategory} onChange={event => setEditorSubcategory(event.target.value)}>{itemTypes[editorCategory].map(value => <option key={value}>{value}</option>)}</select></label>}<div className="form-row"><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Descripción <span className="optional">{cloudMode ? '(la IA la redacta al guardar una foto)' : '(opcional; la IA requiere cuenta conectada)'}</span><textarea name="description" defaultValue={editingItem?.description || ''} rows={4} maxLength={450} placeholder="Se completará al guardar una foto con tu cuenta conectada; también puedes escribirla aquí."/></label><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
+    {showEditor && <div className="modal-backdrop" onClick={() => { setShowEditor(false); setPhotoPreview(''); setPhotoName('') }}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); setPhotoPreview(''); setPhotoName(''); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => { setShowEditor(false); setPhotoPreview(''); setPhotoName('') }} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className={`upload-zone${photoPreview ? ' has-photo' : ''}`}>{photoPreview ? <img className="upload-preview" src={photoPreview} alt="Vista previa de la foto seleccionada"/> : <Upload size={21}/>}<span>{photoName ? 'Foto seleccionada · completa el formulario para guardarla' : editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>{photoName || 'JPG, PNG o WebP · hasta 10 MB; se optimiza al guardar'}</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => { const file = event.target.files?.[0]; setPhotoPreview(file ? URL.createObjectURL(file) : ''); setPhotoName(file?.name || '') }}/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" value={editorCategory} onChange={event => { const nextCategory = event.target.value; setEditorCategory(nextCategory); setEditorSubcategory(defaultSubcategory(nextCategory)) }}>{categories.map(value => <option key={value}>{value}</option>)}</select></label></div>{itemTypes[editorCategory] && <label className="modal-label">{editorCategory === 'Accesorios' ? 'Tipo de accesorio' : editorCategory === 'Calzado' ? 'Tipo de calzado' : 'Tipo de prenda'}<select name="subcategory" value={editorSubcategory} onChange={event => setEditorSubcategory(event.target.value)}>{itemTypes[editorCategory].map(value => <option key={value}>{value}</option>)}</select></label>}<div className="form-row"><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Descripción <span className="optional">{cloudMode ? '(Gemini completa los atributos al guardar)' : '(opcional; la IA requiere cuenta conectada)'}</span><textarea name="description" defaultValue={editingItem?.description || ''} rows={4} maxLength={450} placeholder="Gemini completará la descripción y los atributos al guardar si tienes la cuenta conectada."/></label><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
     {showLogin && <div className="modal-backdrop" onClick={() => setShowLogin(false)}><form className="add-modal" onSubmit={submitAuth} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowLogin(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">CUENTA OUTFIT CHECK</div><h2>{authMode === 'signup' ? 'Crear cuenta' : authMode === 'recovery' ? 'Recuperar contraseña' : authMode === 'update-password' ? 'Establecer contraseña' : 'Iniciar sesión'}</h2><p className="modal-sub">{loginLinkSent ? authMode === 'recovery' ? <>Te enviamos un enlace para restablecer la contraseña de <b>{email}</b>.</> : <>Te enviamos un correo a <b>{email}</b> para confirmar tu cuenta.</> : authMode === 'update-password' ? 'Elige una contraseña nueva para tu cuenta.' : authMode === 'recovery' ? 'Escribe el correo de tu cuenta y te enviaremos un enlace para cambiarla.' : authMode === 'signup' ? 'Crea tu cuenta con correo y una contraseña de al menos 8 caracteres.' : import.meta.env.DEV ? 'Modo de prueba local: al continuar se abrirá el armario en este navegador.' : 'Usa el correo con el que registraste tu cuenta y tu contraseña.'}</p>{authMode !== 'update-password' && <label className="modal-label">Correo electrónico<input type="email" value={email} onChange={event => { setEmail(event.target.value); setLoginLinkSent(false) }} placeholder="tu@email.com" autoComplete="email" required/></label>}{['login', 'signup', 'update-password'].includes(authMode) && <label className="modal-label">Contraseña<input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={8} required/></label>}{['signup', 'update-password'].includes(authMode) && <label className="modal-label">Repite la contraseña<input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} required/></label>}<button className="generate-button modal-submit" disabled={loginBusy || (loginLinkSent && authMode !== 'login')}>{loginBusy ? 'Un momento…' : loginLinkSent ? 'Correo enviado' : authMode === 'signup' ? 'Crear cuenta' : authMode === 'recovery' ? 'Enviar enlace de recuperación' : authMode === 'update-password' ? 'Guardar contraseña' : import.meta.env.DEV ? 'Entrar en modo prueba local' : 'Iniciar sesión'}<LogIn size={16}/></button>{authMode === 'login' && !import.meta.env.DEV && <button type="button" className="text-action" onClick={() => { setAuthMode('recovery'); setLoginLinkSent(false) }}>¿Olvidaste tu contraseña?</button>}{authMode === 'login' && <button type="button" className="text-action" onClick={() => { setAuthMode('signup'); setPassword(''); setConfirmPassword(''); setLoginLinkSent(false) }}>Crear una cuenta nueva</button>}{authMode !== 'login' && authMode !== 'update-password' && <button type="button" className="text-action" onClick={() => { setAuthMode('login'); setLoginLinkSent(false) }}>Volver a iniciar sesión</button>}</form></div>}
   </div>
 }
