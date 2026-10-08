@@ -71,7 +71,7 @@ const callAiEndpoint = async (endpoint, body) => {
     body: JSON.stringify(body),
   })
   const result = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(result.error || 'No se pudo completar la solicitud de IA.')
+  if (!response.ok) throw new Error([result.error, result.detail].filter(Boolean).join(' · ') || 'No se pudo completar la solicitud de IA.')
   return result
 }
 const MAX_PHOTO_SIZE = 10 * 1024 * 1024

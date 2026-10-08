@@ -22,13 +22,20 @@ export default async function handler(req, res) {
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
         contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: imageBase64 } }, { text: prompt }] }],
-        generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
+        generationConfig: {
+          responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 700,
+          thinkingConfig: { thinkingLevel: 'low' },
+        },
       }),
     })
     const response = await upstream.json().catch(() => ({}))
     if (!upstream.ok) {
-      console.error('Gemini request failed:', upstream.status, response.error?.message || '')
-      return sendJson(res, upstream.status === 429 ? 429 : 502, { error: upstream.status === 429 ? 'Gemini ha alcanzado su límite gratuito. Inténtalo más tarde.' : 'Gemini no pudo analizar esta foto.' })
+      const providerMessage = String(response.error?.message || '').replace(/https?:\/\/\S+/g, '[enlace]').slice(0, 240)
+      console.error('Gemini request failed:', upstream.status, providerMessage)
+      return sendJson(res, upstream.status === 429 ? 429 : 502, {
+        error: upstream.status === 429 ? 'Gemini ha alcanzado su límite gratuito. Inténtalo más tarde.' : 'Gemini rechazó la solicitud.',
+        detail: providerMessage || `Respuesta HTTP ${upstream.status}`,
+      })
     }
 
     const parsed = parseModelJson(readGeminiText(response))
@@ -45,6 +52,6 @@ export default async function handler(req, res) {
     return sendJson(res, 200, { description: parsed.description.trim().slice(0, 450), color: String(parsed.color || '').slice(0, 100), attributes })
   } catch (error) {
     console.error('Garment description failed:', error.message)
-    return sendJson(res, 502, { error: 'No se pudo interpretar la respuesta de Gemini. Inténtalo otra vez.' })
+    return sendJson(res, 502, { error: 'No se pudo interpretar la respuesta de Gemini.', detail: String(error.message || '').slice(0, 240) })
   }
 }
