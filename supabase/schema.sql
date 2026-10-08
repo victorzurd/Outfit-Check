@@ -9,6 +9,8 @@ create table if not exists public.wardrobe_items (
   name text not null,
   category text not null check (category in ('Prendas', 'Zapatos', 'Bolsos', 'Accesorios')),
   subcategory text,
+  description text,
+  ai_attributes jsonb not null default '{}'::jsonb,
   color text,
   brand text,
   image_url text,
@@ -17,6 +19,9 @@ create table if not exists public.wardrobe_items (
 );
 
 alter table public.wardrobe_items add column if not exists subcategory text;
+alter table public.wardrobe_items add column if not exists description text;
+alter table public.wardrobe_items add column if not exists ai_attributes jsonb not null default '{}'::jsonb;
+notify pgrst, 'reload schema';
 
 alter table public.wardrobe_items enable row level security;
 drop policy if exists "Users manage their own wardrobe" on public.wardrobe_items;

@@ -31,7 +31,17 @@ No pongas claves `service_role`/secret, el secreto JWT ni credenciales de Postgr
 
 Importa el repositorio y usa `npm run build` como comando de build y `dist` como directorio de salida. La configuración de Vite traduce las variables públicas de la integración de Supabase a la configuración que usa la app.
 
-La aplicación no requiere funciones de servidor, claves de IA ni servicios meteorológicos.
+La web no requiere servicios meteorológicos ni funciones de servidor adicionales fuera de Vercel.
+
+### IA para describir prendas y recomendar looks
+
+La web usa dos funciones de Vercel en `api/`: Gemini analiza una foto al guardar o cambiarla y guarda la descripción y atributos en Supabase; Groq recomienda un outfit usando solo esos datos de texto, sin enviarle imágenes. Para habilitarlo:
+
+1. En la configuración del proyecto de Vercel, añade `GEMINI_API_KEY` y `GROQ_API_KEY` como variables de entorno para Production y Preview. Puedes crear las claves en Google AI Studio y Groq Console. Opcionalmente, configura `GEMINI_MODEL` o `GROQ_MODEL` para elegir otros modelos.
+2. Asegúrate de que Vercel tiene `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY` (también se acepta `SUPABASE_ANON_KEY`) además de la configuración pública usada por Vite. Las claves Gemini y Groq son privadas y no deben llevar el prefijo `VITE_`.
+3. Ejecuta de nuevo `supabase/schema.sql` en Supabase para añadir `description` y `ai_attributes` (además de `subcategory`), y vuelve a desplegar en Vercel.
+
+La IA necesita una sesión iniciada y conexión con Supabase. Las prendas añadidas antes de habilitarla conservan sus datos; al editar una prenda y guardar una foto se genera su descripción. El nivel gratuito de Gemini puede tener límites y Google indica que puede usar los datos enviados para mejorar sus productos; revisa sus condiciones antes de subir fotos privadas.
 
 ## Instalar en ordenador, iPhone o iPad
 
