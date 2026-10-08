@@ -61,8 +61,13 @@ export default async function handler(req, res) {
       id: text(item?.id, 80), name: text(item?.name, 80), category: text(item?.category, 40),
       subcategory: text(item?.subcategory, 60), color: text(item?.color, 100),
       description: text(item?.description, 450), attributes: item?.attributes && typeof item.attributes === 'object' ? item.attributes : {},
-    })).filter(item => item.id && item.name && ['Prendas', 'Zapatos', 'Bolsos', 'Accesorios'].includes(item.category))
+    })).filter(item => item.id && item.name && ['Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios'].includes(item.category))
     if (!wardrobe.length) return sendJson(res, 400, { error: 'No hay prendas válidas para combinar.' })
+    if (!wardrobe.some(item => item.category === 'Calzado')) return sendJson(res, 422, { error: 'Añade al menos un calzado a tu armario para completar el outfit.' })
+    if (!wardrobe.some(item => item.category === 'Cuerpo completo')
+      && !(wardrobe.some(item => item.category === 'Parte de arriba') && wardrobe.some(item => item.category === 'Parte de abajo'))) {
+      return sendJson(res, 422, { error: 'Añade una parte de arriba y una de abajo, o una prenda de cuerpo completo.' })
+    }
 
     const apiKey = process.env.GROQ_API_KEY
     if (!apiKey) return sendJson(res, 500, { error: 'Añade GROQ_API_KEY a las variables de entorno de Vercel.' })
@@ -75,7 +80,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model, temperature: 0.35, max_completion_tokens: 600,
         messages: [
-          { role: 'system', content: 'Eres estilista personal. Elige el outfit más coherente usando EXCLUSIVAMENTE las prendas del armario. No inventes prendas ni devuelvas identificadores ajenos al inventario. Devuelve un único conjunto: una prenda principal si existe, y combina opcionalmente un zapato, un bolso y hasta dos accesorios. Considera ocasión, temperatura, estación, comodidad, armonía de colores, estampados, temporada y formalidad. Usa el perfil de valoraciones del usuario como aprendizaje contextual: prioriza rasgos que suele puntuar alto en situaciones parecidas y evita rasgos puntuados bajo; no generalices una preferencia de una situación a todas las demás. Con pocas valoraciones, da prioridad al buen criterio de estilo. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.' },
+          { role: 'system', content: 'Eres estilista personal. Elige un outfit usando EXCLUSIVAMENTE las prendas del armario y devuelve solo sus IDs. REGLAS OBLIGATORIAS: el outfit debe tener exactamente una prenda de Cuerpo completo O al menos una Parte de arriba y una Parte de abajo; debe incluir exactamente un Calzado; puede incluir cero o un Bolso; puede incluir varios Accesorios, pero como máximo un accesorio cuya subcategory sea Pendientes. Nunca devuelvas más de un Calzado o más de un Bolso. No combines una prenda de Cuerpo completo con partes de arriba o abajo. Puedes añadir otras prendas de Parte de arriba como capas si no usas Cuerpo completo. Considera ocasión, temperatura, estación, comodidad, armonía de colores, estampados, temporada y formalidad. Usa el perfil de valoraciones del usuario como aprendizaje contextual: prioriza rasgos que suele puntuar alto en situaciones parecidas y evita rasgos puntuados bajo; no generalices una preferencia de una situación a todas las demás. Con pocas valoraciones, da prioridad al buen criterio de estilo. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.' },
           { role: 'user', content: JSON.stringify({
             situation: { occasion: text(occasion, 80), mood: text(mood, 100), temperatureC: temperatureC !== null && temperatureC !== undefined && temperatureC !== '' && Number.isFinite(Number(temperatureC)) ? Number(temperatureC) : null, season: text(season, 30) },
             wardrobe, personalizedPreferences: preferences,
@@ -105,15 +110,21 @@ export default async function handler(req, res) {
     const inventoryById = new Map(wardrobe.map(item => [item.id, item]))
     const chosen = [...new Set(Array.isArray(parsed.itemIds) ? parsed.itemIds.map(String) : [])]
       .map(id => inventoryById.get(id)).filter(Boolean)
-    const counts = new Map()
-    const selected = chosen.filter(item => {
-      const maximum = item.category === 'Prendas' || item.category === 'Zapatos' || item.category === 'Bolsos' ? 1 : 2
-      const count = counts.get(item.category) || 0
-      if (count >= maximum) return false
-      counts.set(item.category, count + 1)
-      return true
-    })
-    if (!selected.length) return sendJson(res, 502, { error: 'Groq no devolvió una selección válida. Inténtalo otra vez.' })
+    const fullBody = chosen.find(item => item.category === 'Cuerpo completo')
+    const top = chosen.find(item => item.category === 'Parte de arriba')
+    const bottom = chosen.find(item => item.category === 'Parte de abajo')
+    const shoe = chosen.find(item => item.category === 'Calzado')
+    if (!shoe || (!fullBody && (!top || !bottom))) {
+      return sendJson(res, 502, { error: 'Groq no completó las prendas imprescindibles del outfit. Inténtalo otra vez.' })
+    }
+    const selected = fullBody ? [fullBody] : [top, bottom]
+    selected.push(shoe)
+    const bag = chosen.find(item => item.category === 'Bolsos')
+    if (bag) selected.push(bag)
+    selected.push(...chosen.filter(item => item.category === 'Accesorios' && item.subcategory !== 'Pendientes'))
+    const earrings = chosen.find(item => item.category === 'Accesorios' && item.subcategory === 'Pendientes')
+    if (earrings) selected.push(earrings)
+    selected.push(...chosen.filter(item => item.category === 'Parte de arriba' && item.id !== top?.id && !fullBody))
     return sendJson(res, 200, { itemIds: selected.map(item => item.id), reason: text(parsed.reason, 300) })
   } catch (error) {
     console.error('Outfit recommendation failed:', error.message)

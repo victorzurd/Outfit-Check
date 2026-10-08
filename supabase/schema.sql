@@ -7,7 +7,7 @@ create table if not exists public.wardrobe_items (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
-  category text not null check (category in ('Prendas', 'Zapatos', 'Bolsos', 'Accesorios')),
+  category text not null check (category in ('Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios')),
   subcategory text,
   description text,
   ai_attributes jsonb not null default '{}'::jsonb,
@@ -21,6 +21,19 @@ create table if not exists public.wardrobe_items (
 alter table public.wardrobe_items add column if not exists subcategory text;
 alter table public.wardrobe_items add column if not exists description text;
 alter table public.wardrobe_items add column if not exists ai_attributes jsonb not null default '{}'::jsonb;
+-- Migrate existing broad categories and subcategories to the new wardrobe groups.
+alter table public.wardrobe_items drop constraint if exists wardrobe_items_category_check;
+update public.wardrobe_items
+set category = case
+  when category = 'Zapatos' then 'Calzado'
+  when category = 'Prendas' and lower(coalesce(subcategory, '')) in ('vestido', 'mono', 'peto') then 'Cuerpo completo'
+  when category = 'Prendas' and lower(coalesce(subcategory, '')) in ('pantalón', 'pantalon', 'vaquero', 'falda', 'shorts', 'leggings') then 'Parte de abajo'
+  when category = 'Prendas' then 'Parte de arriba'
+  else category
+end
+where category in ('Prendas', 'Zapatos');
+alter table public.wardrobe_items add constraint wardrobe_items_category_check
+  check (category in ('Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios'));
 notify pgrst, 'reload schema';
 
 alter table public.wardrobe_items enable row level security;

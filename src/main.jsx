@@ -10,9 +10,16 @@ import './styles.css'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
-const categories = ['Prendas', 'Zapatos', 'Bolsos', 'Accesorios']
+const categories = ['Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios']
 const accessoryTypes = ['Pendientes', 'Pulseras', 'Collares', 'Anillos', 'Relojes', 'Cinturones', 'Sombreros', 'Bufandas', 'Gafas', 'Otros']
-const clothingTypes = ['Camiseta', 'Camisa', 'Blusa', 'Pantalón', 'Vaquero', 'Falda', 'Vestido', 'Jersey', 'Sudadera', 'Chaqueta', 'Abrigo', 'Shorts', 'Mono', 'Otros']
+const itemTypes = {
+  'Parte de arriba': ['Camiseta', 'Camisa', 'Blusa', 'Top', 'Jersey', 'Sudadera', 'Chaqueta', 'Abrigo', 'Chaleco', 'Otros'],
+  'Parte de abajo': ['Pantalón', 'Vaquero', 'Falda', 'Shorts', 'Leggings', 'Otros'],
+  'Cuerpo completo': ['Vestido', 'Mono', 'Peto', 'Otros'],
+  Calzado: ['Zapatillas', 'Deportivas', 'Sandalias', 'Botas', 'Botines', 'Tacones', 'Mocasines', 'Bailarinas', 'Chanclas', 'Zapatos', 'Otros'],
+  Accesorios: accessoryTypes,
+}
+const defaultSubcategory = category => itemTypes[category]?.[0] || ''
 const occasions = ['Diario', 'Trabajo', 'Universidad', 'Cena', 'Brunch', 'Fiesta', 'Viaje']
 const localItemsKey = 'outfit-check-wardrobe-v2'
 const localLooksKey = 'outfit-check-saved-looks-v2'
@@ -42,12 +49,26 @@ const readLocal = (key, fallback = []) => {
     return Array.isArray(value) ? value : fallback
   } catch { return fallback }
 }
+const normalizeWardrobeItem = item => {
+  if (item.category === 'Zapatos') return { ...item, category: 'Calzado' }
+  if (item.category !== 'Prendas') return item
+  const subtype = String(item.subcategory || '').toLocaleLowerCase('es')
+  const category = ['vestido', 'mono', 'peto'].includes(subtype) ? 'Cuerpo completo'
+    : ['pantalón', 'pantalon', 'vaquero', 'falda', 'shorts', 'leggings'].includes(subtype) ? 'Parte de abajo' : 'Parte de arriba'
+  return { ...item, category }
+}
 const readLocalItems = () => {
   const current = readLocal(localItemsKey, null)
-  if (current) return current
+  if (current) {
+    const normalized = current.map(normalizeWardrobeItem)
+    if (normalized.some((item, index) => item !== current[index])) {
+      try { localStorage.setItem(localItemsKey, JSON.stringify(normalized)) } catch {}
+    }
+    return normalized
+  }
   const oldItems = readLocal('outfit-check-wardrobe', [])
   const demoIds = new Set([1, 2, 3, 4, 5, 6, 7, 8])
-  const migrated = oldItems.filter(item => !demoIds.has(item.id))
+  const migrated = oldItems.filter(item => !demoIds.has(item.id)).map(normalizeWardrobeItem)
   if (migrated.length) { try { localStorage.setItem(localItemsKey, JSON.stringify(migrated)) } catch {} }
   return migrated
 }
@@ -148,8 +169,8 @@ function App() {
   const [mobileMenu, setMobileMenu] = useState(false)
   const [showEditor, setShowEditor] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
-  const [editorCategory, setEditorCategory] = useState('Prendas')
-  const [editorSubcategory, setEditorSubcategory] = useState('Camiseta')
+  const [editorCategory, setEditorCategory] = useState('Parte de arriba')
+  const [editorSubcategory, setEditorSubcategory] = useState(defaultSubcategory('Parte de arriba'))
   const [photoPreview, setPhotoPreview] = useState('')
   const [photoName, setPhotoName] = useState('')
   const [showLogin, setShowLogin] = useState(false)
@@ -346,12 +367,32 @@ function App() {
   }, [items, category, search, sort])
 
   const chooseRandomItems = () => {
+    const pick = group => shuffle(items.filter(item => item.category === group))[0]
     const selected = []
-    for (const group of categories) {
-      const choices = shuffle(items.filter(item => item.category === group && !selected.some(chosen => chosen.id === item.id)))
-      if (choices.length && (group === 'Prendas' || Math.random() > 0.38)) selected.push(choices[0])
+    const fullBody = shuffle(items.filter(item => item.category === 'Cuerpo completo'))[0]
+    const hasTopAndBottom = items.some(item => item.category === 'Parte de arriba') && items.some(item => item.category === 'Parte de abajo')
+    if (fullBody && (!hasTopAndBottom || Math.random() < 0.5)) selected.push(fullBody)
+    else {
+      const top = pick('Parte de arriba')
+      const bottom = pick('Parte de abajo')
+      if (!top || !bottom) throw new Error('Para crear un outfit necesitas una parte de arriba y una de abajo, o una prenda de cuerpo completo.')
+      selected.push(top, bottom)
     }
-    if (!selected.length) selected.push(shuffle(items)[0])
+    const shoes = pick('Calzado')
+    if (!shoes) throw new Error('Añade al menos un calzado a tu armario para completar el outfit.')
+    selected.push(shoes)
+    const bag = pick('Bolsos')
+    if (bag && Math.random() < 0.55) selected.push(bag)
+    const accessories = shuffle(items.filter(item => item.category === 'Accesorios'))
+    let earringsAdded = false
+    for (const accessory of accessories) {
+      if (selected.length >= 9) break
+      if (accessory.subcategory === 'Pendientes') {
+        if (earringsAdded) continue
+        earringsAdded = true
+      }
+      if (Math.random() < 0.55) selected.push(accessory)
+    }
     return selected
   }
 
@@ -386,7 +427,8 @@ function App() {
         return
       } finally { setBusy(false) }
     }
-    setCurrentLook(chooseRandomItems())
+    try { setCurrentLook(chooseRandomItems()) }
+    catch (error) { flash(error.message || 'No se pudo completar el outfit.') }
   }
 
   const loadInspirationCard = async () => {
@@ -471,9 +513,9 @@ function App() {
   const persistItem = async (form, file) => {
     const name = String(form.get('name') || '').trim()
     const itemCategory = String(form.get('category') || '')
-    const itemSubcategory = ['Accesorios', 'Prendas'].includes(itemCategory) ? String(form.get('subcategory') || '') : ''
+    const itemSubcategory = itemTypes[itemCategory] ? String(form.get('subcategory') || '') : ''
     if (!name || !categories.includes(itemCategory)) throw new Error('Completa el nombre y elige una categoría válida.')
-    const availableTypes = itemCategory === 'Accesorios' ? accessoryTypes : itemCategory === 'Prendas' ? clothingTypes : []
+    const availableTypes = itemTypes[itemCategory] || []
     if (availableTypes.length && !availableTypes.includes(itemSubcategory)) throw new Error('Elige un tipo válido.')
     let image = editingItem?.image || ''
     let imagePath = editingItem?.imagePath || ''
@@ -652,7 +694,7 @@ function App() {
       <header className="topbar"><button className="mobile-menu-btn" onClick={() => setMobileMenu(true)} aria-label="Abrir menú"><Menu size={20}/></button><div className="crumb">Mi espacio <span>/</span> <b>{title}</b></div><div className="top-right"><span className={`sync-status ${cloudMode ? 'is-cloud' : ''}`}><Cloud size={15}/>{cloudMode ? 'Sincronizado' : 'Solo este dispositivo'}</span>{session ? <button className="top-login" onClick={() => setPage('profile')}>Mi cuenta</button> : <button className="top-login" onClick={() => { setLoginLinkSent(false); setEmail(''); setShowLogin(true) }}><LogIn size={15}/> Iniciar sesión</button>}<span className="top-avatar">{session?.user?.email?.[0]?.toUpperCase() || 'O'}</span></div></header>
       <div className="page-content">
         {page === 'wardrobe' && <>
-          <section className="welcome-row"><div><div className="eyebrow">TU ESPACIO, A TU MANERA</div><h1>Mi armario</h1><p>Organiza tus prendas y crea combinaciones con lo que ya tienes.</p></div><button className="primary-button" disabled={!dataReady || busy} onClick={() => { setEditingItem(null); setEditorCategory('Prendas'); setEditorSubcategory('Camiseta'); setShowEditor(true) }}><Plus size={17}/> Añadir prenda</button></section>
+          <section className="welcome-row"><div><div className="eyebrow">TU ESPACIO, A TU MANERA</div><h1>Mi armario</h1><p>Organiza tus prendas y crea combinaciones con lo que ya tienes.</p></div><button className="primary-button" disabled={!dataReady || busy} onClick={() => { setEditingItem(null); setEditorCategory('Parte de arriba'); setEditorSubcategory(defaultSubcategory('Parte de arriba')); setShowEditor(true) }}><Plus size={17}/> Añadir prenda</button></section>
           <section className="look-section">
             <div className="section-heading"><div><div className="eyebrow blush">COMBINACIONES</div><h2>¿Qué te apetece ponerte?</h2><p>Elige un plan y genera una combinación a partir de tus prendas.</p></div></div>
             <div className="builder-card"><div className="builder-controls">
@@ -665,7 +707,7 @@ function App() {
           </section>
           <section className="wardrobe-section"><div className="wardrobe-heading"><div><div className="eyebrow blush">TUS PRENDAS</div><h2>Armario <span className="item-total">{items.length}</span></h2></div></div>
             <div className="wardrobe-toolbar"><div className="category-tabs"><button className={category === 'Todas' ? 'current' : ''} onClick={() => setCategory('Todas')}>Todas</button>{categories.map(value => <button key={value} className={category === value ? 'current' : ''} onClick={() => setCategory(value)}>{value}</button>)}</div><div className="toolbar-actions"><label className="search-box"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar prendas" aria-label="Buscar prendas"/></label><label className="sort-box"><ArrowDownUp size={14}/><select value={sort} onChange={event => setSort(event.target.value)} aria-label="Ordenar prendas"><option value="newest">Más recientes</option><option value="name">Nombre</option><option value="category">Categoría</option></select></label></div></div>
-            {busy && !dataReady ? <div className="empty-state">Cargando tus prendas…</div> : filteredItems.length ? <div className="item-grid">{filteredItems.map(item => <article className="wardrobe-item" key={item.id}><div className="item-photo">{item.image ? <img src={item.image} alt={item.name}/> : <div className="photo-placeholder"><Shirt size={32}/></div>}<span className="item-category">{item.category}{item.subcategory ? ` · ${item.subcategory}` : ''}</span></div><div className="item-info"><button className="item-edit" onClick={() => { setEditingItem(item); setEditorCategory(item.category); setEditorSubcategory(item.subcategory || (item.category === 'Accesorios' ? 'Pendientes' : 'Camiseta')); setShowEditor(true) }}><h3>{item.name}</h3><p>{[item.subcategory, item.brand, item.color].filter(Boolean).join(' · ') || 'Sin detalles adicionales'}</p></button><button className="item-delete" aria-label={`Eliminar ${item.name}`} onClick={() => deleteItem(item)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Shirt size={25}/><b>{items.length ? 'No hay prendas con esos filtros' : 'Todavía no has añadido prendas'}</b><span>{items.length ? 'Prueba otra búsqueda o categoría.' : 'Añade la primera para empezar a organizar tu armario.'}</span>{!items.length && <button className="outline-button" onClick={() => { setEditingItem(null); setEditorCategory('Prendas'); setEditorSubcategory('Camiseta'); setShowEditor(true) }}><Plus size={16}/> Añadir primera prenda</button>}</div>}
+            {busy && !dataReady ? <div className="empty-state">Cargando tus prendas…</div> : filteredItems.length ? <div className="item-grid">{filteredItems.map(item => <article className="wardrobe-item" key={item.id}><div className="item-photo">{item.image ? <img src={item.image} alt={item.name}/> : <div className="photo-placeholder"><Shirt size={32}/></div>}<span className="item-category">{item.category}{item.subcategory ? ` · ${item.subcategory}` : ''}</span></div><div className="item-info"><button className="item-edit" onClick={() => { setEditingItem(item); setEditorCategory(item.category); setEditorSubcategory(item.subcategory || defaultSubcategory(item.category)); setShowEditor(true) }}><h3>{item.name}</h3><p>{[item.subcategory, item.brand, item.color].filter(Boolean).join(' · ') || 'Sin detalles adicionales'}</p></button><button className="item-delete" aria-label={`Eliminar ${item.name}`} onClick={() => deleteItem(item)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Shirt size={25}/><b>{items.length ? 'No hay prendas con esos filtros' : 'Todavía no has añadido prendas'}</b><span>{items.length ? 'Prueba otra búsqueda o categoría.' : 'Añade la primera para empezar a organizar tu armario.'}</span>{!items.length && <button className="outline-button" onClick={() => { setEditingItem(null); setEditorCategory('Parte de arriba'); setEditorSubcategory(defaultSubcategory('Parte de arriba')); setShowEditor(true) }}><Plus size={16}/> Añadir primera prenda</button>}</div>}
           </section>
         </>}
 
@@ -688,7 +730,7 @@ function App() {
       {authCallbackStatus === 'success' && <button className="generate-button" disabled={!dataReady || busy} onClick={() => { setShowAuthCallback(false); setPage('wardrobe') }}>{busy ? 'Cargando tu armario…' : 'Entrar en mi armario'}<ArrowRight size={16}/></button>}
       {authCallbackStatus === 'error' && <div className="auth-callback-actions"><button className="generate-button" onClick={() => { setShowAuthCallback(false); setShowLogin(true) }}><LogIn size={16}/> Solicitar otro enlace</button><button className="text-action" onClick={() => setShowAuthCallback(false)}>Volver a la aplicación</button></div>}
     </section></div>}
-    {showEditor && <div className="modal-backdrop" onClick={() => { setShowEditor(false); setPhotoPreview(''); setPhotoName('') }}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); setPhotoPreview(''); setPhotoName(''); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => { setShowEditor(false); setPhotoPreview(''); setPhotoName('') }} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className={`upload-zone${photoPreview ? ' has-photo' : ''}`}>{photoPreview ? <img className="upload-preview" src={photoPreview} alt="Vista previa de la foto seleccionada"/> : <Upload size={21}/>}<span>{photoName ? 'Foto seleccionada · completa el formulario para guardarla' : editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>{photoName || 'JPG, PNG o WebP · hasta 10 MB; se optimiza al guardar'}</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => { const file = event.target.files?.[0]; setPhotoPreview(file ? URL.createObjectURL(file) : ''); setPhotoName(file?.name || '') }}/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" value={editorCategory} onChange={event => { setEditorCategory(event.target.value); setEditorSubcategory(event.target.value === 'Accesorios' ? 'Pendientes' : 'Camiseta') }}>{categories.map(value => <option key={value}>{value}</option>)}</select></label></div>{['Accesorios', 'Prendas'].includes(editorCategory) && <label className="modal-label">{editorCategory === 'Accesorios' ? 'Tipo de accesorio' : 'Tipo de prenda'}<select name="subcategory" value={editorSubcategory} onChange={event => setEditorSubcategory(event.target.value)}>{(editorCategory === 'Accesorios' ? accessoryTypes : clothingTypes).map(value => <option key={value}>{value}</option>)}</select></label>}<div className="form-row"><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Descripción <span className="optional">{cloudMode ? '(la IA la redacta al guardar una foto)' : '(opcional; la IA requiere cuenta conectada)'}</span><textarea name="description" defaultValue={editingItem?.description || ''} rows={4} maxLength={450} placeholder="Se completará al guardar una foto con tu cuenta conectada; también puedes escribirla aquí."/></label><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
+    {showEditor && <div className="modal-backdrop" onClick={() => { setShowEditor(false); setPhotoPreview(''); setPhotoName('') }}><form className="add-modal" onSubmit={async event => { event.preventDefault(); setBusy(true); try { await persistItem(new FormData(event.currentTarget), event.currentTarget.elements.photo.files?.[0]); setShowEditor(false); setEditingItem(null); setPhotoPreview(''); setPhotoName(''); flash(editingItem ? 'Prenda actualizada.' : 'Prenda añadida al armario.') } catch (error) { flash(error.message || 'No se pudo guardar la prenda.') } finally { setBusy(false) } }} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => { setShowEditor(false); setPhotoPreview(''); setPhotoName('') }} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">TU ARMARIO</div><h2>{editingItem ? 'Editar prenda' : 'Añadir prenda'}</h2><p className="modal-sub">Guarda los detalles para encontrarla y combinarla después.</p><label className={`upload-zone${photoPreview ? ' has-photo' : ''}`}>{photoPreview ? <img className="upload-preview" src={photoPreview} alt="Vista previa de la foto seleccionada"/> : <Upload size={21}/>}<span>{photoName ? 'Foto seleccionada · completa el formulario para guardarla' : editingItem?.image ? 'Cambiar foto (opcional)' : 'Añadir una foto (opcional)'}</span><small>{photoName || 'JPG, PNG o WebP · hasta 10 MB; se optimiza al guardar'}</small><input name="photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => { const file = event.target.files?.[0]; setPhotoPreview(file ? URL.createObjectURL(file) : ''); setPhotoName(file?.name || '') }}/></label><label className="modal-label">Nombre<input name="name" defaultValue={editingItem?.name || ''} placeholder="Ej. Camisa de lino" maxLength={80} required/></label><div className="form-row"><label className="modal-label">Categoría<select name="category" value={editorCategory} onChange={event => { const nextCategory = event.target.value; setEditorCategory(nextCategory); setEditorSubcategory(defaultSubcategory(nextCategory)) }}>{categories.map(value => <option key={value}>{value}</option>)}</select></label></div>{itemTypes[editorCategory] && <label className="modal-label">{editorCategory === 'Accesorios' ? 'Tipo de accesorio' : editorCategory === 'Calzado' ? 'Tipo de calzado' : 'Tipo de prenda'}<select name="subcategory" value={editorSubcategory} onChange={event => setEditorSubcategory(event.target.value)}>{itemTypes[editorCategory].map(value => <option key={value}>{value}</option>)}</select></label>}<div className="form-row"><label className="modal-label">Color<input name="color" defaultValue={editingItem?.color || ''} placeholder="Ej. Azul cielo" maxLength={40}/></label></div><label className="modal-label">Descripción <span className="optional">{cloudMode ? '(la IA la redacta al guardar una foto)' : '(opcional; la IA requiere cuenta conectada)'}</span><textarea name="description" defaultValue={editingItem?.description || ''} rows={4} maxLength={450} placeholder="Se completará al guardar una foto con tu cuenta conectada; también puedes escribirla aquí."/></label><label className="modal-label">Marca <span className="optional">(opcional)</span><input name="brand" defaultValue={editingItem?.brand || ''} placeholder="Ej. COS" maxLength={60}/></label><button className="generate-button modal-submit" disabled={busy}>{busy ? 'Guardando…' : editingItem ? 'Guardar cambios' : 'Añadir al armario'}</button></form></div>}
     {showLogin && <div className="modal-backdrop" onClick={() => setShowLogin(false)}><form className="add-modal" onSubmit={submitAuth} onClick={event => event.stopPropagation()}><button type="button" className="modal-close" onClick={() => setShowLogin(false)} aria-label="Cerrar"><X size={19}/></button><div className="eyebrow blush">CUENTA OUTFIT CHECK</div><h2>{authMode === 'signup' ? 'Crear cuenta' : authMode === 'recovery' ? 'Recuperar contraseña' : authMode === 'update-password' ? 'Establecer contraseña' : 'Iniciar sesión'}</h2><p className="modal-sub">{loginLinkSent ? authMode === 'recovery' ? <>Te enviamos un enlace para restablecer la contraseña de <b>{email}</b>.</> : <>Te enviamos un correo a <b>{email}</b> para confirmar tu cuenta.</> : authMode === 'update-password' ? 'Elige una contraseña nueva para tu cuenta.' : authMode === 'recovery' ? 'Escribe el correo de tu cuenta y te enviaremos un enlace para cambiarla.' : authMode === 'signup' ? 'Crea tu cuenta con correo y una contraseña de al menos 8 caracteres.' : import.meta.env.DEV ? 'Modo de prueba local: al continuar se abrirá el armario en este navegador.' : 'Usa el correo con el que registraste tu cuenta y tu contraseña.'}</p>{authMode !== 'update-password' && <label className="modal-label">Correo electrónico<input type="email" value={email} onChange={event => { setEmail(event.target.value); setLoginLinkSent(false) }} placeholder="tu@email.com" autoComplete="email" required/></label>}{['login', 'signup', 'update-password'].includes(authMode) && <label className="modal-label">Contraseña<input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Mínimo 8 caracteres" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} minLength={8} required/></label>}{['signup', 'update-password'].includes(authMode) && <label className="modal-label">Repite la contraseña<input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} required/></label>}<button className="generate-button modal-submit" disabled={loginBusy || (loginLinkSent && authMode !== 'login')}>{loginBusy ? 'Un momento…' : loginLinkSent ? 'Correo enviado' : authMode === 'signup' ? 'Crear cuenta' : authMode === 'recovery' ? 'Enviar enlace de recuperación' : authMode === 'update-password' ? 'Guardar contraseña' : import.meta.env.DEV ? 'Entrar en modo prueba local' : 'Iniciar sesión'}<LogIn size={16}/></button>{authMode === 'login' && !import.meta.env.DEV && <button type="button" className="text-action" onClick={() => { setAuthMode('recovery'); setLoginLinkSent(false) }}>¿Olvidaste tu contraseña?</button>}{authMode === 'login' && <button type="button" className="text-action" onClick={() => { setAuthMode('signup'); setPassword(''); setConfirmPassword(''); setLoginLinkSent(false) }}>Crear una cuenta nueva</button>}{authMode !== 'login' && authMode !== 'update-password' && <button type="button" className="text-action" onClick={() => { setAuthMode('login'); setLoginLinkSent(false) }}>Volver a iniciar sesión</button>}</form></div>}
   </div>
 }

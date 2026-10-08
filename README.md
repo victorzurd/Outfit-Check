@@ -16,7 +16,7 @@ Sin Supabase, las prendas y los looks se guardan en el almacenamiento local del 
 ## Supabase
 
 1. Crea un proyecto de Supabase.
-2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en SQL Editor. El esquema crea las tablas del armario, los looks guardados y las valoraciones de outfits, activa Row Level Security y configura el bucket privado `wardrobe-photos` con permisos por usuario. Si ya tienes Supabase configurado, vuelve a ejecutar el esquema para añadir los campos nuevos y la tabla de valoraciones.
+2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en SQL Editor. El esquema crea las tablas del armario, los looks guardados y las valoraciones de outfits, activa Row Level Security y configura el bucket privado `wardrobe-photos` con permisos por usuario. Si ya tienes Supabase configurado, vuelve a ejecutar el esquema para añadir los campos y la tabla de valoraciones, y migrar las categorías antiguas del armario.
 3. Configura las variables públicas del proyecto para el build:
    - `STORAGE_SUPABASE_URL` (también se acepta `STORAGE_VITE_PUBLIC_SUPABASE_URL`)
    - `STORAGE_SUPABASE_PUBLISHABLE_KEY` (o `STORAGE_SUPABASE_ANON_KEY`; también se aceptan los nombres `STORAGE_VITE_PUBLIC_SUPABASE_*`)
@@ -42,6 +42,8 @@ La web usa dos funciones de Vercel en `api/`: Gemini analiza una foto al guardar
 3. Ejecuta de nuevo `supabase/schema.sql` en Supabase para añadir `description` y `ai_attributes` (además de `subcategory`), y vuelve a desplegar en Vercel.
 
 La IA necesita una sesión iniciada y conexión con Supabase. La página **Inspiración** propone outfits para distintas ocasiones, estaciones y temperaturas. Cada puntuación se guarda junto con el contexto y una copia de las prendas del outfit; Groq resume las valoraciones por situación y las usa al recomendar nuevos looks. Sin sesión, las puntuaciones solo se guardan en ese navegador. Las prendas añadidas antes de habilitar la IA conservan sus datos; al editar una prenda y guardar una foto se genera su descripción. El nivel gratuito de Gemini puede tener límites y Google indica que puede usar los datos enviados para mejorar sus productos; revisa sus condiciones antes de subir fotos privadas.
+
+El armario separa **Parte de arriba**, **Parte de abajo**, **Cuerpo completo**, **Calzado**, **Bolsos** y **Accesorios**, con subtipos como sandalias, zapatillas, pantalones o pendientes. Los outfits incluyen calzado y una prenda de cuerpo completo o una parte de arriba más una de abajo; el bolso es opcional (máximo uno) y se pueden combinar varios accesorios, con un máximo de un par de pendientes.
 
 ## Instalar en ordenador, iPhone o iPad
 
