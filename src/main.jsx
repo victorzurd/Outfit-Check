@@ -354,7 +354,9 @@ function App() {
         if (signedError) {
           await supabase.storage.from('wardrobe-photos').remove([path])
           if (/object not found/i.test(signedError.message || '')) {
-            throw new Error('Supabase no encuentra la foto o no permite leerla. Ejecuta supabase/schema.sql en el proyecto conectado y comprueba el bucket privado “wardrobe-photos” y su permiso de lectura para tu usuario.')
+            const details = [signedError.status && `HTTP ${signedError.status}`, signedError.code, signedError.message]
+              .filter(Boolean).join(' · ')
+            throw new Error(`Supabase no encuentra la foto o no permite leerla. Comprueba que la app apunta al proyecto donde ejecutaste supabase/schema.sql, que existe el bucket privado “wardrobe-photos” y que la política de lectura permite la carpeta de tu usuario.${details ? ` Detalle: ${details}` : ''}`)
           }
           throw signedError
         }
