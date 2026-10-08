@@ -101,11 +101,18 @@ const callAiEndpoint = async (endpoint, body) => {
   if (!supabase) throw new Error('Conecta Supabase para usar la IA.')
   const { data: { session: activeSession } } = await supabase.auth.getSession()
   if (!activeSession?.access_token) throw new Error('Inicia sesión para usar la IA.')
-  const response = await fetch(`/api/${endpoint}`, {
+  const sendRequest = () => fetch(`/api/${endpoint}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${activeSession.access_token}` },
     body: JSON.stringify(body),
   })
-  const result = await response.json().catch(() => ({}))
+  let response = await sendRequest()
+  let result = await response.json().catch(() => ({}))
+  if (response.status === 429 && Number.isFinite(Number(result.retryAfterSeconds))) {
+    const delayMs = Math.min(60, Math.max(1, Number(result.retryAfterSeconds) + 1)) * 1000
+    await new Promise(resolve => window.setTimeout(resolve, delayMs))
+    response = await sendRequest()
+    result = await response.json().catch(() => ({}))
+  }
   if (!response.ok) throw new Error([result.error, result.detail].filter(Boolean).join(' · ') || 'No se pudo completar la solicitud de IA.')
   return result
 }
@@ -231,6 +238,8 @@ function App() {
   const [dataReady, setDataReady] = useState(false)
   const [cloudMode, setCloudMode] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [generateCooldown, setGenerateCooldown] = useState(0)
+  const generationLockRef = useRef(false)
   const [notice, setNotice] = useState('')
   const [mobileMenu, setMobileMenu] = useState(false)
   const [showEditor, setShowEditor] = useState(false)
@@ -260,6 +269,12 @@ function App() {
   const flash = message => { setNotice(message); window.setTimeout(() => setNotice(''), 3200) }
 
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview) }, [photoPreview])
+
+  useEffect(() => {
+    if (generateCooldown <= 0) return undefined
+    const timer = window.setTimeout(() => setGenerateCooldown(seconds => Math.max(0, seconds - 1)), 1000)
+    return () => window.clearTimeout(timer)
+  }, [generateCooldown])
 
   useEffect(() => {
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {})
@@ -520,6 +535,8 @@ function App() {
   const generateLook = async () => {
     if (!items.length) { flash('Añade algunas prendas para crear tu primer look.'); return }
     if (cloudMode && session?.user) {
+      if (generationLockRef.current || generateCooldown > 0) return
+      generationLockRef.current = true
       setBusy(true)
       try {
         const result = await recommendOutfitWithAI({ occasion, mood })
@@ -529,7 +546,11 @@ function App() {
       } catch (error) {
         flash(`No se pudo crear el outfit con IA: ${error.message || 'comprueba la configuración de Groq y Supabase.'}`)
         return
-      } finally { setBusy(false) }
+      } finally {
+        setBusy(false)
+        generationLockRef.current = false
+        setGenerateCooldown(20)
+      }
     }
     try { setCurrentLook(chooseRandomItems()) }
     catch (error) { flash(error.message || 'No se pudo completar el outfit.') }
@@ -821,7 +842,7 @@ function App() {
             <div className="builder-card"><div className="builder-controls">
               <label className="field-label" htmlFor="occasion">Plan</label><select id="occasion" className="builder-select" value={occasion} onChange={event => setOccasion(event.target.value)}>{occasions.map(value => <option key={value}>{value}</option>)}</select>
               <label className="field-label" htmlFor="mood">Cómo quieres sentirte</label><input id="mood" className="builder-input" value={mood} onChange={event => setMood(event.target.value)} maxLength={60} placeholder="Cómoda, elegante, informal…"/>
-              <button className="generate-button" disabled={!dataReady || !items.length || busy} onClick={generateLook}><Sparkles size={17}/>{busy ? 'Pensando el outfit…' : currentLook.length ? 'Probar otra combinación' : cloudMode ? 'Crear outfit con IA' : 'Crear una combinación'}</button>
+              <button className="generate-button" disabled={!dataReady || !items.length || busy || (cloudMode && !!session?.user && generateCooldown > 0)} onClick={generateLook}><Sparkles size={17}/>{busy ? 'Pensando el outfit…' : cloudMode && session?.user && generateCooldown > 0 ? `Disponible en ${generateCooldown}s` : currentLook.length ? 'Probar otra combinación' : cloudMode ? 'Crear outfit con IA' : 'Crear una combinación'}</button>
             </div><div className="look-result">
               {currentLook.length ? <><div className="result-top"><span className="result-label"><span className="live-dot"/> COMBINACIÓN PARA {occasion.toLocaleUpperCase('es')}</span></div><div className="outfit-images">{currentLook.map(item => <div className="outfit-image" key={item.id}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={32}/>}<span>{item.name}</span></div>)}</div><div className="outfit-copy"><div><h3>{occasion}</h3><p>{mood || 'A tu estilo'} · {currentLook.length} {currentLook.length === 1 ? 'prenda' : 'prendas'}</p></div><button className="text-action" onClick={saveLook}><Heart size={15}/> Guardar</button></div></> : <div className="look-empty"><Sparkles size={25}/><b>{items.length ? 'Tu siguiente combinación aparecerá aquí' : 'Tu armario está listo para empezar'}</b><span>{items.length ? 'La app combinará al azar las prendas que has añadido.' : 'Añade prendas para poder crear combinaciones.'}</span></div>}
             </div></div>

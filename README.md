@@ -25,6 +25,8 @@ Sin Supabase, las prendas y los looks se guardan en el almacenamiento local del 
 
 Para borrar los datos de una cuenta concreta y volver a cargar su armario, usa [`supabase/reset-user-data.sql`](supabase/reset-user-data.sql): sustituye `correo@ejemplo.com` por el correo de esa cuenta antes de ejecutarlo. Borra prendas, looks guardados y valoraciones de ese usuario; no elimina la cuenta ni afecta a otros usuarios. Las fotos del bucket privado deben borrarse aparte desde Storage.
 
+Para poblar una cuenta de pruebas, ejecuta [`supabase/seed-wardrobe-30.sql`](supabase/seed-wardrobe-30.sql) y luego, si quieres ampliar el armario, [`supabase/seed-wardrobe-100.sql`](supabase/seed-wardrobe-100.sql). En cada archivo sustituye `tu_correo@ejemplo.com` por el email de la cuenta. Los datos son ficticios, incluyen atributos de ejemplo y no tienen fotos; no se envían a Gemini.
+
 Al iniciar sesión con correo y contraseña, la aplicación carga y guarda prendas y looks en Supabase. Las cuentas previas que todavía no tengan contraseña pueden usar “¿Olvidaste tu contraseña?” para establecer una. Sin sesión, conserva los datos localmente en el dispositivo.
 
 No pongas claves `service_role`/secret, el secreto JWT ni credenciales de Postgres en variables expuestas al cliente. La app solo usa la URL y la clave pública de Supabase.

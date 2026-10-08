@@ -154,9 +154,12 @@ export default async function handler(req, res) {
     if (!upstream.ok) {
       const detail = text(response.error?.message || `Groq respondió HTTP ${upstream.status}.`, 320)
       console.error('Groq request failed:', activeStage, upstream.status, detail)
+      const retryMatch = detail.match(/try again in\s+([\d.]+)s/i)
+      const retryAfterSeconds = retryMatch ? Math.min(60, Math.max(1, Number(retryMatch[1]))) : null
       return sendJson(res, upstream.status === 429 ? 429 : 502, {
         error: upstream.status === 429 ? `Groq alcanzó su límite durante la etapa ${activeStage}.` : `Groq falló durante la etapa ${activeStage}.`,
         detail,
+        ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
       })
     }
 
