@@ -54,8 +54,8 @@ export default async function handler(req, res) {
     if (auth.error) return sendJson(res, auth.status, { error: auth.error })
 
     const { inventory, occasion, mood, temperatureC, season } = req.body || {}
-    if (!Array.isArray(inventory) || inventory.length === 0 || inventory.length > 100) {
-      return sendJson(res, 400, { error: 'El armario debe incluir entre 1 y 100 prendas.' })
+    if (!Array.isArray(inventory) || inventory.length === 0) {
+      return sendJson(res, 400, { error: 'El armario debe incluir al menos una prenda.' })
     }
     const wardrobe = inventory.map(item => ({
       id: text(item?.id, 80), name: text(item?.name, 80), category: text(item?.category, 40),
