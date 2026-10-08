@@ -16,7 +16,7 @@ Sin Supabase, las prendas y los looks se guardan en el almacenamiento local del 
 ## Supabase
 
 1. Crea un proyecto de Supabase.
-2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en SQL Editor. El esquema crea las tablas del armario y los looks, activa Row Level Security y configura el bucket privado `wardrobe-photos` con permisos de lectura, carga y borrado por carpeta de usuario. Si ya tienes Supabase configurado, vuelve a ejecutar el esquema para añadir el campo de subcategoría.
+2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en SQL Editor. El esquema crea las tablas del armario, los looks guardados y las valoraciones de outfits, activa Row Level Security y configura el bucket privado `wardrobe-photos` con permisos por usuario. Si ya tienes Supabase configurado, vuelve a ejecutar el esquema para añadir los campos nuevos y la tabla de valoraciones.
 3. Configura las variables públicas del proyecto para el build:
    - `STORAGE_SUPABASE_URL` (también se acepta `STORAGE_VITE_PUBLIC_SUPABASE_URL`)
    - `STORAGE_SUPABASE_PUBLISHABLE_KEY` (o `STORAGE_SUPABASE_ANON_KEY`; también se aceptan los nombres `STORAGE_VITE_PUBLIC_SUPABASE_*`)
@@ -41,7 +41,7 @@ La web usa dos funciones de Vercel en `api/`: Gemini analiza una foto al guardar
 2. Asegúrate de que Vercel tiene `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY` (también se acepta `SUPABASE_ANON_KEY`) además de la configuración pública usada por Vite. Las claves Gemini y Groq son privadas y no deben llevar el prefijo `VITE_`.
 3. Ejecuta de nuevo `supabase/schema.sql` en Supabase para añadir `description` y `ai_attributes` (además de `subcategory`), y vuelve a desplegar en Vercel.
 
-La IA necesita una sesión iniciada y conexión con Supabase. Las prendas añadidas antes de habilitarla conservan sus datos; al editar una prenda y guardar una foto se genera su descripción. El nivel gratuito de Gemini puede tener límites y Google indica que puede usar los datos enviados para mejorar sus productos; revisa sus condiciones antes de subir fotos privadas.
+La IA necesita una sesión iniciada y conexión con Supabase. La página **Inspiración** propone outfits para distintas ocasiones, estaciones y temperaturas. Cada puntuación se guarda junto con el contexto y una copia de las prendas del outfit; Groq resume las valoraciones por situación y las usa al recomendar nuevos looks. Sin sesión, las puntuaciones solo se guardan en ese navegador. Las prendas añadidas antes de habilitar la IA conservan sus datos; al editar una prenda y guardar una foto se genera su descripción. El nivel gratuito de Gemini puede tener límites y Google indica que puede usar los datos enviados para mejorar sus productos; revisa sus condiciones antes de subir fotos privadas.
 
 ## Instalar en ordenador, iPhone o iPad
 

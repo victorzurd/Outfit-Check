@@ -43,6 +43,24 @@ drop policy if exists "Users manage their own saved outfits" on public.saved_out
 create policy "Users manage their own saved outfits" on public.saved_outfits
   for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+create table if not exists public.outfit_feedback (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  occasion text not null,
+  mood text,
+  temperature_c integer,
+  season text,
+  rating smallint not null check (rating between 1 and 5),
+  outfit_snapshot jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.outfit_feedback enable row level security;
+drop policy if exists "Users manage their own outfit feedback" on public.outfit_feedback;
+create policy "Users manage their own outfit feedback" on public.outfit_feedback
+  for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create index if not exists outfit_feedback_user_created_idx on public.outfit_feedback(user_id, created_at desc);
+notify pgrst, 'reload schema';
+
 -- Private bucket: the app signs image URLs after authenticating the account.
 insert into storage.buckets (id, name, public)
 values ('wardrobe-photos', 'wardrobe-photos', false)

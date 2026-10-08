@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
 import {
-  ArrowDownUp, ArrowRight, Check, Cloud, Download, Heart, LayoutGrid, LoaderCircle, LogIn,
-  LogOut, Menu, Plus, Search, Shirt, Sparkles, Trash2, Upload, UserRound, X,
+  ArrowDownUp, ArrowRight, Check, Cloud, Compass, Download, Heart, LayoutGrid, LoaderCircle, LogIn,
+  LogOut, Menu, Plus, Search, Shirt, Sparkles, Star, Thermometer, Trash2, Upload, UserRound, X,
 } from 'lucide-react'
 import './styles.css'
 
@@ -16,6 +16,19 @@ const clothingTypes = ['Camiseta', 'Camisa', 'Blusa', 'Pantalón', 'Vaquero', 'F
 const occasions = ['Diario', 'Trabajo', 'Universidad', 'Cena', 'Brunch', 'Fiesta', 'Viaje']
 const localItemsKey = 'outfit-check-wardrobe-v2'
 const localLooksKey = 'outfit-check-saved-looks-v2'
+const localFeedbackBaseKey = 'outfit-check-outfit-feedback-v1'
+const feedbackStorageKey = userId => `${localFeedbackBaseKey}-${userId || 'local'}`
+const readFeedback = userId => readLocal(feedbackStorageKey(userId), [])
+const inspirationMoments = [
+  { occasion: 'Universidad', mood: 'Casual y cómoda', temperatureC: 22, season: 'Invierno', moment: 'Un día de clases' },
+  { occasion: 'Trabajo', mood: 'Elegante y relajada', temperatureC: 17, season: 'Primavera', moment: 'Una jornada de trabajo' },
+  { occasion: 'Brunch', mood: 'Ligera y luminosa', temperatureC: 24, season: 'Verano', moment: 'Un brunch con amigas' },
+  { occasion: 'Cena', mood: 'Chic casual', temperatureC: 9, season: 'Otoño', moment: 'Una cena improvisada' },
+  { occasion: 'Viaje', mood: 'Práctica y cómoda', temperatureC: 14, season: 'Otoño', moment: 'Un día explorando una ciudad' },
+  { occasion: 'Diario', mood: 'Abrigo con estilo', temperatureC: 5, season: 'Invierno', moment: 'Un paseo por el centro' },
+  { occasion: 'Fiesta', mood: 'Atrevida y especial', temperatureC: 20, season: 'Primavera', moment: 'Una noche de fiesta' },
+  { occasion: 'Universidad', mood: 'Fresca y sencilla', temperatureC: 28, season: 'Verano', moment: 'Un día de exámenes' },
+]
 const hasAuthCallback = () => {
   const params = new URLSearchParams(window.location.search)
   const hash = new URLSearchParams(window.location.hash.slice(1))
@@ -122,6 +135,10 @@ function App() {
   const [page, setPage] = useState('wardrobe')
   const [items, setItems] = useState([])
   const [looks, setLooks] = useState([])
+  const [feedback, setFeedback] = useState(() => readFeedback())
+  const [feedCards, setFeedCards] = useState([])
+  const [feedLoading, setFeedLoading] = useState(false)
+  const feedContainerRef = useRef(null)
   const [session, setSession] = useState(null)
   const [authReady, setAuthReady] = useState(!supabase)
   const [dataReady, setDataReady] = useState(false)
@@ -173,6 +190,7 @@ function App() {
     if (!supabase) {
       setItems(readLocalItems())
       setLooks(readLocal(localLooksKey))
+      setFeedback(readFeedback())
       setDataReady(true)
       if (hasAuthCallback()) {
         setAuthCallbackError('Falta conectar Supabase para validar el enlace de acceso.')
@@ -262,6 +280,7 @@ function App() {
       setBusy(false)
       setItems(readLocalItems())
       setLooks(readLocal(localLooksKey))
+      setFeedback(readFeedback(session?.user?.id))
       setDataReady(true)
       return () => { alive = false }
     }
@@ -270,7 +289,8 @@ function App() {
     Promise.all([
       supabase.from('wardrobe_items').select('*').order('created_at', { ascending: false }),
       supabase.from('saved_outfits').select('*').order('created_at', { ascending: false }),
-    ]).then(async ([wardrobeResult, looksResult]) => {
+      supabase.from('outfit_feedback').select('*').order('created_at', { ascending: false }),
+    ]).then(async ([wardrobeResult, looksResult, feedbackResult]) => {
       if (!alive) return
       if (wardrobeResult.error) throw wardrobeResult.error
       if (looksResult.error) throw looksResult.error
@@ -281,6 +301,7 @@ function App() {
         id: row.id, name: row.name, occasion: row.occasion || '', mood: row.mood || '',
         createdAt: row.created_at, items: (row.item_ids || []).map(id => itemsById.get(String(id))).filter(Boolean),
       })))
+      setFeedback(feedbackResult.error ? readFeedback(session.user.id) : (feedbackResult.data || []))
       setCloudMode(true)
       setDataReady(true)
     }).catch(error => {
@@ -303,6 +324,16 @@ function App() {
     } catch { flash('No hay espacio local suficiente. Elimina alguna foto o conecta Supabase para sincronizar.') }
   }, [items, looks, dataReady, cloudMode])
 
+  useEffect(() => {
+    try { localStorage.setItem(feedbackStorageKey(session?.user?.id), JSON.stringify(feedback)) } catch {}
+  }, [feedback, session?.user?.id])
+
+  useEffect(() => {
+    if (page === 'inspiration' && feedCards.length) {
+      feedContainerRef.current?.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [feedCards.length, page])
+
   const filteredItems = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase('es')
     const result = items.filter(item => (category === 'Todas' || item.category === category)
@@ -314,6 +345,26 @@ function App() {
         : new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
   }, [items, category, search, sort])
 
+  const chooseRandomItems = () => {
+    const selected = []
+    for (const group of categories) {
+      const choices = shuffle(items.filter(item => item.category === group && !selected.some(chosen => chosen.id === item.id)))
+      if (choices.length && (group === 'Prendas' || Math.random() > 0.38)) selected.push(choices[0])
+    }
+    if (!selected.length) selected.push(shuffle(items)[0])
+    return selected
+  }
+
+  const feedbackForAI = () => feedback.map(row => ({
+    occasion: row.occasion || '', mood: row.mood || '', temperatureC: row.temperature_c ?? row.temperatureC ?? null,
+    season: row.season || '', rating: row.rating,
+    outfit: (row.outfit_snapshot || row.outfitSnapshot || []).map(item => ({
+      name: item.name || '', category: item.category || '', subcategory: item.subcategory || '', color: item.color || '',
+      style: item.attributes?.style || '', pattern: item.attributes?.pattern || '', formality: item.attributes?.formality || '',
+      seasons: item.attributes?.seasons || [],
+    })),
+  }))
+
   const generateLook = async () => {
     if (!items.length) { flash('Añade algunas prendas para crear tu primer look.'); return }
     if (cloudMode && session?.user) {
@@ -323,7 +374,7 @@ function App() {
           id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
           color: item.color || '', description: item.description || '', attributes: item.aiAttributes || {},
         }))
-        const data = await callAiEndpoint('recommend-outfit', { inventory, occasion, mood })
+        const data = await callAiEndpoint('recommend-outfit', { inventory, occasion, mood, feedback: feedbackForAI() })
         const allowedIds = new Set(inventory.map(item => item.id))
         const selectedIds = Array.isArray(data?.itemIds) ? data.itemIds.filter(id => allowedIds.has(String(id))) : []
         const selected = selectedIds.map(id => items.find(item => String(item.id) === String(id))).filter(Boolean)
@@ -335,13 +386,59 @@ function App() {
         return
       } finally { setBusy(false) }
     }
-    const selected = []
-    for (const group of ['Prendas', 'Zapatos', 'Bolsos', 'Accesorios']) {
-      const choices = shuffle(items.filter(item => item.category === group && !selected.some(x => x.id === item.id)))
-      if (choices.length && (group === 'Prendas' || Math.random() > 0.38)) selected.push(choices[0])
+    setCurrentLook(chooseRandomItems())
+  }
+
+  const loadInspirationCard = async () => {
+    if (!items.length) { flash('Añade prendas a tu armario para descubrir outfits.'); return }
+    if (feedLoading) return
+    setFeedLoading(true)
+    try {
+      const recent = new Set(feedCards.slice(-3).map(card => `${card.occasion}|${card.season}`))
+      const moments = inspirationMoments.filter(moment => !recent.has(`${moment.occasion}|${moment.season}`))
+      const moment = shuffle(moments.length ? moments : inspirationMoments)[0]
+      let selected
+      let reason = ''
+      if (cloudMode && session?.user) {
+        const inventory = items.map(item => ({
+          id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
+          color: item.color || '', description: item.description || '', attributes: item.aiAttributes || {},
+        }))
+        const data = await callAiEndpoint('recommend-outfit', {
+          inventory, occasion: moment.occasion, mood: moment.mood,
+          temperatureC: moment.temperatureC, season: moment.season, feedback: feedbackForAI(),
+        })
+        const allowedIds = new Set(inventory.map(item => item.id))
+        const selectedIds = Array.isArray(data?.itemIds) ? data.itemIds.filter(id => allowedIds.has(String(id))) : []
+        selected = selectedIds.map(id => items.find(item => String(item.id) === String(id))).filter(Boolean)
+        reason = data.reason || ''
+      } else selected = chooseRandomItems()
+      if (!selected?.length) throw new Error('No se encontró un outfit con prendas válidas.')
+      setFeedCards(previous => [...previous, {
+        id: crypto.randomUUID(), ...moment, items: selected, reason, rating: null, createdAt: new Date().toISOString(),
+      }])
+    } catch (error) {
+      flash(`No se pudo crear el outfit: ${error.message || 'inténtalo de nuevo.'}`)
+    } finally { setFeedLoading(false) }
+  }
+
+  const rateInspirationCard = async (card, rating) => {
+    const createdAt = new Date().toISOString()
+    const outfitSnapshot = card.items.map(item => ({
+      id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
+      color: item.color || '', description: item.description || '', attributes: item.aiAttributes || {},
+    }))
+    const row = {
+      id: card.id, occasion: card.occasion, mood: card.mood, temperature_c: card.temperatureC,
+      season: card.season, rating, outfit_snapshot: outfitSnapshot, created_at: createdAt,
     }
-    if (!selected.length) selected.push(shuffle(items)[0])
-    setCurrentLook(selected)
+    if (cloudMode && session?.user) {
+      const { error } = await supabase.from('outfit_feedback').upsert({ ...row, user_id: session.user.id }, { onConflict: 'id' })
+      if (error) flash('Puntuación guardada en este dispositivo. Ejecuta supabase/schema.sql para sincronizarla.')
+      else flash('Valoración guardada; ayudará a personalizar tus próximos outfits.')
+    } else flash('Valoración guardada en este dispositivo.')
+    setFeedback(previous => [row, ...previous.filter(entry => entry.id !== card.id)])
+    setFeedCards(previous => previous.map(entry => entry.id === card.id ? { ...entry, rating } : entry))
   }
 
   const saveLook = async () => {
@@ -536,6 +633,7 @@ function App() {
 
   const navItems = [
     { id: 'wardrobe', label: 'Mi armario', icon: LayoutGrid },
+    { id: 'inspiration', label: 'Inspiración', icon: Compass },
     { id: 'looks', label: 'Mis looks', icon: Heart },
     { id: 'profile', label: 'Mi perfil', icon: UserRound },
   ]
@@ -545,7 +643,7 @@ function App() {
     <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>
       <a className="brand" href="#armario" onClick={event => { event.preventDefault(); setPage('wardrobe'); setMobileMenu(false) }}><span className="brand-mark">oc</span><span>outfit check</span></a>
       <div className="nav-label">TU ESPACIO</div>
-      {navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => { setPage(id); setMobileMenu(false) }}><Icon size={18}/>{label}{id === 'wardrobe' && <span className="nav-count">{items.length}</span>}{id === 'looks' && <span className="nav-count">{looks.length}</span>}</button>)}
+      {navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => { setPage(id); setMobileMenu(false); if (id === 'inspiration' && !feedCards.length) loadInspirationCard() }}><Icon size={18}/>{label}{id === 'wardrobe' && <span className="nav-count">{items.length}</span>}{id === 'looks' && <span className="nav-count">{looks.length}</span>}</button>)}
       <div className="side-note"><Sparkles size={17}/><p>Tu armario, tus planes, <b>tu próximo look.</b></p><button onClick={() => { setPage('wardrobe'); setMobileMenu(false); generateLook() }}>Crear una combinación <ArrowRight size={14}/></button></div>
       <button className="profile-mini profile-button" onClick={() => { setPage('profile'); setMobileMenu(false) }}><span className="avatar">{session?.user?.email?.[0]?.toUpperCase() || 'O'}</span><span className="profile-copy"><b>{session?.user?.email || 'Tu espacio personal'}</b><small>{cloudMode ? 'Sincronizado con Supabase' : 'Guardado en este dispositivo'}</small></span><ArrowRight size={15}/></button>
     </aside>
@@ -570,6 +668,8 @@ function App() {
             {busy && !dataReady ? <div className="empty-state">Cargando tus prendas…</div> : filteredItems.length ? <div className="item-grid">{filteredItems.map(item => <article className="wardrobe-item" key={item.id}><div className="item-photo">{item.image ? <img src={item.image} alt={item.name}/> : <div className="photo-placeholder"><Shirt size={32}/></div>}<span className="item-category">{item.category}{item.subcategory ? ` · ${item.subcategory}` : ''}</span></div><div className="item-info"><button className="item-edit" onClick={() => { setEditingItem(item); setEditorCategory(item.category); setEditorSubcategory(item.subcategory || (item.category === 'Accesorios' ? 'Pendientes' : 'Camiseta')); setShowEditor(true) }}><h3>{item.name}</h3><p>{[item.subcategory, item.brand, item.color].filter(Boolean).join(' · ') || 'Sin detalles adicionales'}</p></button><button className="item-delete" aria-label={`Eliminar ${item.name}`} onClick={() => deleteItem(item)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Shirt size={25}/><b>{items.length ? 'No hay prendas con esos filtros' : 'Todavía no has añadido prendas'}</b><span>{items.length ? 'Prueba otra búsqueda o categoría.' : 'Añade la primera para empezar a organizar tu armario.'}</span>{!items.length && <button className="outline-button" onClick={() => { setEditingItem(null); setEditorCategory('Prendas'); setEditorSubcategory('Camiseta'); setShowEditor(true) }}><Plus size={16}/> Añadir primera prenda</button>}</div>}
           </section>
         </>}
+
+        {page === 'inspiration' && <section className="content-panel inspiration-page"><div className="inspiration-heading"><div><div className="eyebrow blush">TU PRÓXIMA IDEA</div><h1>Inspiración</h1><p>Descubre outfits para momentos distintos y puntúa los que más van contigo.</p></div><div className="inspiration-heading-actions"><span>{feedback.length} valoraciones</span><button className="primary-button" onClick={loadInspirationCard} disabled={feedLoading || !items.length}><Sparkles size={16}/>{feedLoading ? 'Creando…' : 'Siguiente outfit'}</button></div></div>{!items.length ? <div className="empty-state"><Shirt size={26}/><b>Primero llena tu armario</b><span>Añade algunas prendas para descubrir combinaciones para la universidad, una cena, un viaje y más.</span><button className="outline-button" onClick={() => setPage('wardrobe')}><LayoutGrid size={16}/> Ir a mi armario</button></div> : <div className="inspiration-feed" ref={feedContainerRef}>{feedCards.map((card, cardIndex) => <article className="inspiration-card" key={card.id}><div className="inspiration-card-media"><div className="inspiration-photo-grid">{card.items.map(item => <div className="inspiration-photo" key={`${card.id}-${item.id}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={36}/>}<span>{item.name}</span></div>)}</div><div className="inspiration-vignette"/><div className="inspiration-card-count">{String(cardIndex + 1).padStart(2, '0')} · LOOK</div><div className="inspiration-rating" aria-label="Puntúa este outfit">{[5, 4, 3, 2, 1].map(score => <button key={score} className={card.rating >= score ? 'rated' : ''} title={`${score} de 5`} aria-label={`Puntuar con ${score} de 5`} onClick={() => rateInspirationCard(card, score)}><Star size={20} fill={card.rating >= score ? 'currentColor' : 'none'}/><small>{score}</small></button>)}</div></div><div className="inspiration-card-copy"><div className="inspiration-context"><span>{card.occasion}</span><span><Thermometer size={14}/>{card.temperatureC}°C</span><span>{card.season}</span></div><div className="eyebrow blush">{card.moment}</div><h2>{card.mood}</h2><p className="inspiration-reason">{card.reason || 'Una propuesta creada a partir de las prendas de tu armario.'}</p><div className="inspiration-item-list">{card.items.map(item => <span key={`${card.id}-tag-${item.id}`}>{item.subcategory || item.category} · {item.name}</span>)}</div><div className="inspiration-card-footer">{card.rating ? <span>Tu puntuación: <b>{card.rating}/5</b> · Se tendrá en cuenta para situaciones parecidas.</span> : <span>¿Te lo pondrías? Tu valoración ayudará a personalizar futuras ideas.</span>}<button className="text-action" onClick={loadInspirationCard} disabled={feedLoading}>{feedLoading ? 'Preparando…' : 'Siguiente'}<ArrowRight size={15}/></button></div></div></article>)}{!feedCards.length && feedLoading && <div className="empty-state">Preparando tu primer outfit…</div>}</div>}</section>}
 
         {page === 'looks' && <section className="content-panel"><div className="welcome-row"><div><div className="eyebrow blush">COMBINACIONES GUARDADAS</div><h1>Mis looks</h1><p>Guarda ideas para volver a ellas cuando las necesites.</p></div><button className="primary-button" onClick={() => { setPage('wardrobe'); if (!currentLook.length) generateLook() }}><Sparkles size={16}/> Crear un look</button></div>{looks.length ? <div className="saved-look-grid">{looks.map(look => <article className="saved-look-card" key={look.id}><div className="saved-look-images">{look.items.map((item, index) => <div className="saved-look-image" key={`${look.id}-${item.id}-${index}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={26}/>}<span>{item.name}</span></div>)}</div><div className="saved-look-copy"><div><span className="eyebrow blush">{look.occasion || 'LOOK GUARDADO'}</span><h2>{look.name}</h2><p>{look.mood || ''}{look.createdAt ? ` · ${new Date(look.createdAt).toLocaleDateString('es-ES')}` : ''}</p></div><button className="item-delete" aria-label={`Eliminar ${look.name}`} onClick={() => removeLook(look)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Heart size={25}/><b>Aún no has guardado ningún look</b><span>Crea una combinación en “Mi armario” y guárdala para verla aquí.</span><button className="outline-button" onClick={() => { setPage('wardrobe'); generateLook() }}><Sparkles size={16}/> Crear combinación</button></div>}</section>}
 
