@@ -37,7 +37,7 @@ La web no requiere servicios meteorológicos ni funciones de servidor adicionale
 
 La web usa dos funciones de Vercel en `api/`: Gemini analiza una foto al guardar o cambiarla y guarda la descripción y atributos en Supabase; Groq recomienda un outfit usando solo esos datos de texto, sin enviarle imágenes. Para habilitarlo:
 
-1. En la configuración del proyecto de Vercel, añade `GEMINI_API_KEY` y `GROQ_API_KEY` como variables de entorno para Production y Preview. Puedes crear las claves en Google AI Studio y Groq Console. Opcionalmente, configura `GEMINI_MODEL` o `GROQ_MODEL` para elegir otros modelos.
+1. En la configuración del proyecto de Vercel, añade `GEMINI_API_KEY` y `GROQ_API_KEY` como variables de entorno para Production y Preview. Puedes crear las claves en Google AI Studio y Groq Console. Opcionalmente, configura `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` o `GROQ_MODEL` para elegir otros modelos. Si Gemini está saturado, la función prueba automáticamente modelos Flash alternativos.
 2. Asegúrate de que Vercel tiene `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY` (también se acepta `SUPABASE_ANON_KEY`) además de la configuración pública usada por Vite. Las claves Gemini y Groq son privadas y no deben llevar el prefijo `VITE_`.
 3. Ejecuta de nuevo `supabase/schema.sql` en Supabase para añadir `description` y `ai_attributes` (además de `subcategory`), y vuelve a desplegar en Vercel.
 

@@ -17,28 +17,47 @@ export default async function handler(req, res) {
 
     const prompt = `Analiza exclusivamente la prenda u objeto de moda principal de la imagen para un armario personal. Devuelve SOLO un objeto JSON válido con estas claves: description (descripción detallada en español de lo visible, máximo 450 caracteres), color (color principal y secundarios visibles), pattern (estampado o "liso"), material (solo apariencia visual; usa "no identificable en la imagen" si no se puede saber), fit (corte/silueta visible), style (estilo), formality (uno de "informal", "smart casual", "formal", "deportivo", "fiesta", "desconocido"), seasons (array con estaciones adecuadas), confidence (número de 0 a 1). No inventes marca, composición textil ni características ocultas. Si la foto no permite afirmarlo, dilo claramente. Categoría elegida por la persona: ${String(category || '').slice(0, 40)}. Tipo elegido: ${String(subcategory || '').slice(0, 60)}. Nombre: ${String(name || '').slice(0, 80)}.`
 
-    const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL || 'gemini-3.8-flash'}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({
-        contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: imageBase64 } }, { text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 700,
-          thinkingConfig: { thinkingLevel: 'low' },
-        },
-      }),
-    })
-    const response = await upstream.json().catch(() => ({}))
-    if (!upstream.ok) {
-      const providerMessage = String(response.error?.message || '').replace(/https?:\/\/\S+/g, '[enlace]').slice(0, 240)
-      console.error('Gemini request failed:', upstream.status, providerMessage)
-      return sendJson(res, upstream.status === 429 ? 429 : 502, {
-        error: upstream.status === 429 ? 'Gemini ha alcanzado su límite gratuito. Inténtalo más tarde.' : 'Gemini rechazó la solicitud.',
-        detail: providerMessage || `Respuesta HTTP ${upstream.status}`,
-      })
+    const models = [...new Set([
+      process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.7-flash',
+      'gemini-3.5-flash-lite',
+    ])]
+    let parsed
+    let lastFailure = ''
+    for (const model of models) {
+      try {
+        const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify({
+            contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: imageBase64 } }, { text: prompt }] }],
+            generationConfig: {
+              responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 700,
+              ...(!model.includes('flash-lite') ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
+            },
+          }),
+        })
+        const response = await upstream.json().catch(() => ({}))
+        if (!upstream.ok) {
+          const detail = String(response.error?.message || `Respuesta HTTP ${upstream.status}`).replace(/https?:\/\/\S+/g, '[enlace]').slice(0, 240)
+          console.error('Gemini model failed:', model, upstream.status, detail)
+          lastFailure = `${model} (${upstream.status}): ${detail}`
+          if (upstream.status === 429 || upstream.status >= 500) continue
+          return sendJson(res, 502, { error: 'Gemini rechazó la solicitud.', detail })
+        }
+        parsed = parseModelJson(readGeminiText(response))
+        if (typeof parsed.description === 'string' && parsed.description.trim()) break
+        lastFailure = `${model}: respuesta sin descripción`
+        parsed = null
+      } catch (error) {
+        lastFailure = `${model}: ${String(error.message || 'error de respuesta').slice(0, 180)}`
+        parsed = null
+      }
     }
-
-    const parsed = parseModelJson(readGeminiText(response))
+    if (!parsed) {
+      console.error('All Gemini models failed:', lastFailure)
+      return sendJson(res, 502, { error: 'Gemini no pudo analizar la foto con los modelos disponibles.', detail: lastFailure })
+    }
     if (typeof parsed.description !== 'string' || !parsed.description.trim()) throw new Error('Gemini devolvió una descripción vacía.')
     const attributes = {
       pattern: String(parsed.pattern || 'desconocido').slice(0, 100),
