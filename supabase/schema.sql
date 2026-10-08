@@ -8,12 +8,15 @@ create table if not exists public.wardrobe_items (
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   category text not null check (category in ('Prendas', 'Zapatos', 'Bolsos', 'Accesorios')),
+  subcategory text,
   color text,
   brand text,
   image_url text,
   tags text[] not null default '{}',
   created_at timestamptz not null default now()
 );
+
+alter table public.wardrobe_items add column if not exists subcategory text;
 
 alter table public.wardrobe_items enable row level security;
 drop policy if exists "Users manage their own wardrobe" on public.wardrobe_items;

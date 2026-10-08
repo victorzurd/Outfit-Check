@@ -16,7 +16,7 @@ Sin Supabase, las prendas y los looks se guardan en el almacenamiento local del 
 ## Supabase
 
 1. Crea un proyecto de Supabase.
-2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en SQL Editor. El esquema crea las tablas del armario y los looks, activa Row Level Security y configura el bucket privado `wardrobe-photos` con permisos de lectura, carga y borrado por carpeta de usuario.
+2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en SQL Editor. El esquema crea las tablas del armario y los looks, activa Row Level Security y configura el bucket privado `wardrobe-photos` con permisos de lectura, carga y borrado por carpeta de usuario. Si ya tienes Supabase configurado, vuelve a ejecutar el esquema para añadir el campo de subcategoría.
 3. Configura las variables públicas del proyecto para el build:
    - `STORAGE_SUPABASE_URL` (también se acepta `STORAGE_VITE_PUBLIC_SUPABASE_URL`)
    - `STORAGE_SUPABASE_PUBLISHABLE_KEY` (o `STORAGE_SUPABASE_ANON_KEY`; también se aceptan los nombres `STORAGE_VITE_PUBLIC_SUPABASE_*`)
