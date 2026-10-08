@@ -53,9 +53,17 @@ export default async function handler(req, res) {
     const auth = await requireUser(req)
     if (auth.error) return sendJson(res, auth.status, { error: auth.error })
 
-    const { inventory, occasion, mood, temperatureC, season } = req.body || {}
+    const { inventory, occasion, mood, temperatureC, season, selectedItems = [] } = req.body || {}
+    const stage = req.body?.stage
+    const stageInstructions = {
+      base: 'Elige exactamente UNA sola opción para iniciar el outfit: una Parte de arriba o una prenda de Cuerpo completo. Si eliges Cuerpo completo, no se añadirán partes de arriba ni de abajo.',
+      bottom: 'Elige exactamente una Parte de abajo que combine con la parte de arriba ya elegida. No repitas ni sustituyas las prendas ya seleccionadas.',
+      footwear: 'Elige exactamente un Calzado que combine con todas las prendas ya seleccionadas.',
+      extras: 'Elige cero o un Bolso y los Accesorios que mejor completen el outfit. Como máximo uno de cada tipo que se lleve de uno en uno: Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos sí pueden repetirse. Devuelve solo artículos de la lista candidata; la lista puede quedar vacía.',
+    }
+    if (!Object.hasOwn(stageInstructions, stage)) return sendJson(res, 400, { error: 'Falta una etapa válida para crear el outfit.' })
     if (!Array.isArray(inventory) || inventory.length === 0) {
-      return sendJson(res, 400, { error: 'El armario debe incluir al menos una prenda.' })
+      if (stage !== 'extras' || !Array.isArray(inventory)) return sendJson(res, 400, { error: 'No hay candidatos para esta etapa del outfit.' })
     }
     const wardrobe = inventory.map(item => ({
       id: text(item?.id, 80), name: text(item?.name, 80), category: text(item?.category, 40),
@@ -63,10 +71,24 @@ export default async function handler(req, res) {
       description: text(item?.description, 450), attributes: item?.attributes && typeof item.attributes === 'object' ? item.attributes : {},
     })).filter(item => item.id && item.name && ['Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios'].includes(item.category))
     if (!wardrobe.length) return sendJson(res, 400, { error: 'No hay prendas válidas para combinar.' })
-    if (!wardrobe.some(item => item.category === 'Calzado')) return sendJson(res, 422, { error: 'Añade al menos un calzado a tu armario para completar el outfit.' })
-    if (!wardrobe.some(item => item.category === 'Cuerpo completo')
-      && !(wardrobe.some(item => item.category === 'Parte de arriba') && wardrobe.some(item => item.category === 'Parte de abajo'))) {
-      return sendJson(res, 422, { error: 'Añade una parte de arriba y una de abajo, o una prenda de cuerpo completo.' })
+    const validStages = {
+      base: item => ['Parte de arriba', 'Cuerpo completo'].includes(item.category),
+      bottom: item => item.category === 'Parte de abajo',
+      footwear: item => item.category === 'Calzado',
+      extras: item => ['Bolsos', 'Accesorios'].includes(item.category),
+    }
+    const candidates = wardrobe.filter(validStages[stage])
+    if (!candidates.length && stage !== 'extras') return sendJson(res, 422, { error: 'No hay prendas disponibles para esta parte del outfit.' })
+    const chosenContext = (Array.isArray(selectedItems) ? selectedItems : []).slice(0, 8).map(item => ({
+      id: text(item?.id, 80), name: text(item?.name, 80), category: text(item?.category, 40),
+      subcategory: text(item?.subcategory, 60), color: text(item?.color, 100),
+      description: text(item?.description, 300), attributes: item?.attributes && typeof item.attributes === 'object' ? item.attributes : {},
+    }))
+    if (stage === 'bottom' && !chosenContext.some(item => item.category === 'Parte de arriba')) {
+      return sendJson(res, 400, { error: 'La etapa de parte de abajo necesita una parte de arriba ya elegida.' })
+    }
+    if (['footwear', 'extras'].includes(stage) && !chosenContext.length) {
+      return sendJson(res, 400, { error: 'Esta etapa necesita las prendas seleccionadas anteriormente.' })
     }
 
     const apiKey = process.env.GROQ_API_KEY
@@ -80,10 +102,10 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model, temperature: 0.35, max_completion_tokens: 600,
         messages: [
-          { role: 'system', content: 'Eres estilista personal. Elige un outfit usando EXCLUSIVAMENTE las prendas del armario y devuelve solo sus IDs. REGLAS OBLIGATORIAS: el outfit debe tener exactamente una prenda de Cuerpo completo O al menos una Parte de arriba y una Parte de abajo; debe incluir exactamente un Calzado; puede incluir cero o un Bolso; puede incluir varios Accesorios. Como máximo uno de cada tipo de accesorio que normalmente se lleva de uno en uno: Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos sí pueden ser varios. Nunca devuelvas más de un Calzado o más de un Bolso. No combines una prenda de Cuerpo completo con partes de arriba o abajo. Puedes añadir otras prendas de Parte de arriba como capas si no usas Cuerpo completo. Considera ocasión, temperatura, estación, comodidad, armonía de colores, estampados, temporada y formalidad. Usa el perfil de valoraciones del usuario como aprendizaje contextual: prioriza rasgos que suele puntuar alto en situaciones parecidas y evita rasgos puntuados bajo; no generalices una preferencia de una situación a todas las demás. Con pocas valoraciones, da prioridad al buen criterio de estilo. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.' },
+          { role: 'system', content: `Eres estilista personal y trabajas en la etapa "${stage}" de un outfit. Elige EXCLUSIVAMENTE IDs de candidates; no inventes ni repitas prendas. ${stageInstructions[stage]} Considera la situación, las prendas que ya se eligieron, comodidad, armonía de colores, estación, temperatura y formalidad. Usa las preferencias personales como guía para esta situación. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.` },
           { role: 'user', content: JSON.stringify({
             situation: { occasion: text(occasion, 80), mood: text(mood, 100), temperatureC: temperatureC !== null && temperatureC !== undefined && temperatureC !== '' && Number.isFinite(Number(temperatureC)) ? Number(temperatureC) : null, season: text(season, 30) },
-            wardrobe, personalizedPreferences: preferences,
+            alreadySelected: chosenContext, candidates, personalizedPreferences: preferences,
           }) },
         ],
         response_format: {
@@ -107,29 +129,31 @@ export default async function handler(req, res) {
     }
 
     const parsed = parseModelJson(response.choices?.[0]?.message?.content)
-    const inventoryById = new Map(wardrobe.map(item => [item.id, item]))
+    const inventoryById = new Map(candidates.map(item => [item.id, item]))
     const chosen = [...new Set(Array.isArray(parsed.itemIds) ? parsed.itemIds.map(String) : [])]
       .map(id => inventoryById.get(id)).filter(Boolean)
-    const fullBody = chosen.find(item => item.category === 'Cuerpo completo')
-    const top = chosen.find(item => item.category === 'Parte de arriba')
-    const bottom = chosen.find(item => item.category === 'Parte de abajo')
-    const shoe = chosen.find(item => item.category === 'Calzado')
-    if (!shoe || (!fullBody && (!top || !bottom))) {
-      return sendJson(res, 502, { error: 'Groq no completó las prendas imprescindibles del outfit. Inténtalo otra vez.' })
+    let selected = []
+    if (stage === 'base') selected = chosen.filter(item => ['Parte de arriba', 'Cuerpo completo'].includes(item.category)).slice(0, 1)
+    if (stage === 'bottom') selected = chosen.filter(item => item.category === 'Parte de abajo').slice(0, 1)
+    if (stage === 'footwear') selected = chosen.filter(item => item.category === 'Calzado').slice(0, 1)
+    if (stage === 'extras') {
+      let bagAdded = false
+      const accessoryCounts = new Map()
+      for (const item of chosen) {
+        if (item.category === 'Bolsos') {
+          if (bagAdded) continue
+          bagAdded = true
+          selected.push(item)
+        } else if (item.category === 'Accesorios') {
+          const subtype = item.subcategory || 'Otros'
+          const count = accessoryCounts.get(subtype) || 0
+          if (!['Pulseras', 'Anillos'].includes(subtype) && count >= 1) continue
+          accessoryCounts.set(subtype, count + 1)
+          selected.push(item)
+        }
+      }
     }
-    const selected = fullBody ? [fullBody] : [top, bottom]
-    selected.push(shoe)
-    const bag = chosen.find(item => item.category === 'Bolsos')
-    if (bag) selected.push(bag)
-    const accessoryCounts = new Map()
-    for (const accessory of chosen.filter(item => item.category === 'Accesorios')) {
-      const subtype = accessory.subcategory || 'Otros'
-      const count = accessoryCounts.get(subtype) || 0
-      if (!['Pulseras', 'Anillos'].includes(subtype) && count >= 1) continue
-      selected.push(accessory)
-      accessoryCounts.set(subtype, count + 1)
-    }
-    selected.push(...chosen.filter(item => item.category === 'Parte de arriba' && item.id !== top?.id && !fullBody))
+    if (stage !== 'extras' && selected.length !== 1) return sendJson(res, 502, { error: 'Groq no pudo elegir una prenda válida para esta etapa. Inténtalo otra vez.' })
     return sendJson(res, 200, { itemIds: selected.map(item => item.id), reason: text(parsed.reason, 300) })
   } catch (error) {
     console.error('Outfit recommendation failed:', error.message)

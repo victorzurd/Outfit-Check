@@ -409,21 +409,48 @@ function App() {
     })),
   }))
 
+  const recommendOutfitWithAI = async situation => {
+    const inventory = items.map(item => ({
+      id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
+      color: item.color || '', description: item.description || '', attributes: item.aiAttributes || {},
+    }))
+    const selected = []
+    const reasons = []
+    const chooseStage = async (stage, allowedCategories, optional = false) => {
+      const candidates = inventory.filter(item => allowedCategories.includes(item.category))
+      if (!candidates.length && optional) return []
+      if (!candidates.length) throw new Error('No hay prendas disponibles para completar este outfit.')
+      const data = await callAiEndpoint('recommend-outfit', {
+        stage, inventory: candidates, selectedItems: selected,
+        occasion: situation.occasion, mood: situation.mood,
+        temperatureC: situation.temperatureC, season: situation.season,
+        feedback: feedbackForAI(),
+      })
+      const candidateIds = new Set(candidates.map(item => item.id))
+      const stageItems = [...new Set((Array.isArray(data.itemIds) ? data.itemIds : []).map(String))]
+        .filter(id => candidateIds.has(id))
+        .map(id => candidates.find(item => item.id === id)).filter(Boolean)
+      if (!stageItems.length && !optional) throw new Error('Groq no eligió una prenda válida. Inténtalo de nuevo.')
+      selected.push(...stageItems)
+      if (data.reason) reasons.push(data.reason)
+      return stageItems
+    }
+
+    const base = await chooseStage('base', ['Parte de arriba', 'Cuerpo completo'])
+    if (base[0].category === 'Parte de arriba') await chooseStage('bottom', ['Parte de abajo'])
+    await chooseStage('footwear', ['Calzado'])
+    await chooseStage('extras', ['Bolsos', 'Accesorios'], true)
+    return { items: selected.map(item => items.find(wardrobeItem => String(wardrobeItem.id) === item.id)).filter(Boolean), reason: reasons.join(' ') }
+  }
+
   const generateLook = async () => {
     if (!items.length) { flash('Añade algunas prendas para crear tu primer look.'); return }
     if (cloudMode && session?.user) {
       setBusy(true)
       try {
-        const inventory = items.map(item => ({
-          id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
-          color: item.color || '', description: item.description || '', attributes: item.aiAttributes || {},
-        }))
-        const data = await callAiEndpoint('recommend-outfit', { inventory, occasion, mood, feedback: feedbackForAI() })
-        const allowedIds = new Set(inventory.map(item => item.id))
-        const selectedIds = Array.isArray(data?.itemIds) ? data.itemIds.filter(id => allowedIds.has(String(id))) : []
-        const selected = selectedIds.map(id => items.find(item => String(item.id) === String(id))).filter(Boolean)
-        if (!selected.length) throw new Error('La IA no devolvió prendas válidas. Inténtalo otra vez.')
-        setCurrentLook(selected)
+        const result = await recommendOutfitWithAI({ occasion, mood })
+        if (!result.items.length) throw new Error('La IA no devolvió prendas válidas. Inténtalo otra vez.')
+        setCurrentLook(result.items)
         return
       } catch (error) {
         flash(`No se pudo crear el outfit con IA: ${error.message || 'comprueba la configuración de Groq y Supabase.'}`)
@@ -445,18 +472,9 @@ function App() {
       let selected
       let reason = ''
       if (cloudMode && session?.user) {
-        const inventory = items.map(item => ({
-          id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
-          color: item.color || '', description: item.description || '', attributes: item.aiAttributes || {},
-        }))
-        const data = await callAiEndpoint('recommend-outfit', {
-          inventory, occasion: moment.occasion, mood: moment.mood,
-          temperatureC: moment.temperatureC, season: moment.season, feedback: feedbackForAI(),
-        })
-        const allowedIds = new Set(inventory.map(item => item.id))
-        const selectedIds = Array.isArray(data?.itemIds) ? data.itemIds.filter(id => allowedIds.has(String(id))) : []
-        selected = selectedIds.map(id => items.find(item => String(item.id) === String(id))).filter(Boolean)
-        reason = data.reason || ''
+        const result = await recommendOutfitWithAI(moment)
+        selected = result.items
+        reason = result.reason
       } else selected = chooseRandomItems()
       if (!selected?.length) throw new Error('No se encontró un outfit con prendas válidas.')
       setFeedCards(previous => [...previous, {
