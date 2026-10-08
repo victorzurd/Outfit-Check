@@ -80,7 +80,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model, temperature: 0.35, max_completion_tokens: 600,
         messages: [
-          { role: 'system', content: 'Eres estilista personal. Elige un outfit usando EXCLUSIVAMENTE las prendas del armario y devuelve solo sus IDs. REGLAS OBLIGATORIAS: el outfit debe tener exactamente una prenda de Cuerpo completo O al menos una Parte de arriba y una Parte de abajo; debe incluir exactamente un Calzado; puede incluir cero o un Bolso; puede incluir varios Accesorios, pero como máximo un accesorio cuya subcategory sea Pendientes. Nunca devuelvas más de un Calzado o más de un Bolso. No combines una prenda de Cuerpo completo con partes de arriba o abajo. Puedes añadir otras prendas de Parte de arriba como capas si no usas Cuerpo completo. Considera ocasión, temperatura, estación, comodidad, armonía de colores, estampados, temporada y formalidad. Usa el perfil de valoraciones del usuario como aprendizaje contextual: prioriza rasgos que suele puntuar alto en situaciones parecidas y evita rasgos puntuados bajo; no generalices una preferencia de una situación a todas las demás. Con pocas valoraciones, da prioridad al buen criterio de estilo. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.' },
+          { role: 'system', content: 'Eres estilista personal. Elige un outfit usando EXCLUSIVAMENTE las prendas del armario y devuelve solo sus IDs. REGLAS OBLIGATORIAS: el outfit debe tener exactamente una prenda de Cuerpo completo O al menos una Parte de arriba y una Parte de abajo; debe incluir exactamente un Calzado; puede incluir cero o un Bolso; puede incluir varios Accesorios. Como máximo uno de cada tipo de accesorio que normalmente se lleva de uno en uno: Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos sí pueden ser varios. Nunca devuelvas más de un Calzado o más de un Bolso. No combines una prenda de Cuerpo completo con partes de arriba o abajo. Puedes añadir otras prendas de Parte de arriba como capas si no usas Cuerpo completo. Considera ocasión, temperatura, estación, comodidad, armonía de colores, estampados, temporada y formalidad. Usa el perfil de valoraciones del usuario como aprendizaje contextual: prioriza rasgos que suele puntuar alto en situaciones parecidas y evita rasgos puntuados bajo; no generalices una preferencia de una situación a todas las demás. Con pocas valoraciones, da prioridad al buen criterio de estilo. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.' },
           { role: 'user', content: JSON.stringify({
             situation: { occasion: text(occasion, 80), mood: text(mood, 100), temperatureC: temperatureC !== null && temperatureC !== undefined && temperatureC !== '' && Number.isFinite(Number(temperatureC)) ? Number(temperatureC) : null, season: text(season, 30) },
             wardrobe, personalizedPreferences: preferences,
@@ -121,9 +121,14 @@ export default async function handler(req, res) {
     selected.push(shoe)
     const bag = chosen.find(item => item.category === 'Bolsos')
     if (bag) selected.push(bag)
-    selected.push(...chosen.filter(item => item.category === 'Accesorios' && item.subcategory !== 'Pendientes'))
-    const earrings = chosen.find(item => item.category === 'Accesorios' && item.subcategory === 'Pendientes')
-    if (earrings) selected.push(earrings)
+    const accessoryCounts = new Map()
+    for (const accessory of chosen.filter(item => item.category === 'Accesorios')) {
+      const subtype = accessory.subcategory || 'Otros'
+      const count = accessoryCounts.get(subtype) || 0
+      if (!['Pulseras', 'Anillos'].includes(subtype) && count >= 1) continue
+      selected.push(accessory)
+      accessoryCounts.set(subtype, count + 1)
+    }
     selected.push(...chosen.filter(item => item.category === 'Parte de arriba' && item.id !== top?.id && !fullBody))
     return sendJson(res, 200, { itemIds: selected.map(item => item.id), reason: text(parsed.reason, 300) })
   } catch (error) {

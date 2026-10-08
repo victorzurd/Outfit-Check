@@ -12,6 +12,7 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 const categories = ['Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios']
 const accessoryTypes = ['Pendientes', 'Pulseras', 'Collares', 'Anillos', 'Relojes', 'Cinturones', 'Sombreros', 'Bufandas', 'Gafas', 'Otros']
+const singleWearAccessories = new Set(['Pendientes', 'Collares', 'Relojes', 'Cinturones', 'Sombreros', 'Bufandas', 'Gafas', 'Otros'])
 const itemTypes = {
   'Parte de arriba': ['Camiseta', 'Camisa', 'Blusa', 'Top', 'Jersey', 'Sudadera', 'Chaqueta', 'Abrigo', 'Chaleco', 'Otros'],
   'Parte de abajo': ['Pantalón', 'Vaquero', 'Falda', 'Shorts', 'Leggings', 'Otros'],
@@ -384,14 +385,16 @@ function App() {
     const bag = pick('Bolsos')
     if (bag && Math.random() < 0.55) selected.push(bag)
     const accessories = shuffle(items.filter(item => item.category === 'Accesorios'))
-    let earringsAdded = false
+    const accessoryCounts = new Map()
     for (const accessory of accessories) {
       if (selected.length >= 9) break
-      if (accessory.subcategory === 'Pendientes') {
-        if (earringsAdded) continue
-        earringsAdded = true
+      const subtype = accessory.subcategory || 'Otros'
+      const count = accessoryCounts.get(subtype) || 0
+      if (singleWearAccessories.has(subtype) && count >= 1) continue
+      if (Math.random() < 0.55) {
+        selected.push(accessory)
+        accessoryCounts.set(subtype, count + 1)
       }
-      if (Math.random() < 0.55) selected.push(accessory)
     }
     return selected
   }
