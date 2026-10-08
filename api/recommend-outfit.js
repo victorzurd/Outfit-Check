@@ -49,12 +49,14 @@ const preferenceContext = feedback => {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return sendJson(res, 405, { error: 'Método no permitido.' })
+  let activeStage = 'desconocida'
   try {
     const auth = await requireUser(req)
     if (auth.error) return sendJson(res, auth.status, { error: auth.error })
 
     const { inventory, occasion, mood, temperatureC, season, selectedItems = [] } = req.body || {}
     const stage = req.body?.stage
+    activeStage = stage || activeStage
     const stageInstructions = {
       base: 'Elige exactamente UNA sola opción para iniciar el outfit: una Parte de arriba o una prenda de Cuerpo completo. Si eliges Cuerpo completo, no se añadirán partes de arriba ni de abajo.',
       bottom: 'Elige exactamente una Parte de abajo que combine con la parte de arriba ya elegida. No repitas ni sustituyas las prendas ya seleccionadas.',
@@ -100,7 +102,7 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model, temperature: 0.35, max_completion_tokens: 600,
+        model, temperature: 0.35, reasoning_effort: 'low', max_completion_tokens: 1200,
         messages: [
           { role: 'system', content: `Eres estilista personal y trabajas en la etapa "${stage}" de un outfit. Elige EXCLUSIVAMENTE IDs de candidates; no inventes ni repitas prendas. ${stageInstructions[stage]} Considera la situación, las prendas que ya se eligieron, comodidad, armonía de colores, estación, temperatura y formalidad. Usa las preferencias personales como guía para esta situación. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.` },
           { role: 'user', content: JSON.stringify({
@@ -124,11 +126,22 @@ export default async function handler(req, res) {
     })
     const response = await upstream.json().catch(() => ({}))
     if (!upstream.ok) {
-      console.error('Groq request failed:', upstream.status, response.error?.message || '')
-      return sendJson(res, upstream.status === 429 ? 429 : 502, { error: upstream.status === 429 ? 'Groq ha alcanzado su límite de uso. Inténtalo más tarde.' : 'Groq no pudo elegir un outfit.' })
+      const detail = text(response.error?.message || `Groq respondió HTTP ${upstream.status}.`, 320)
+      console.error('Groq request failed:', activeStage, upstream.status, detail)
+      return sendJson(res, upstream.status === 429 ? 429 : 502, {
+        error: upstream.status === 429 ? `Groq alcanzó su límite durante la etapa ${activeStage}.` : `Groq falló durante la etapa ${activeStage}.`,
+        detail,
+      })
     }
 
-    const parsed = parseModelJson(response.choices?.[0]?.message?.content)
+    const completion = response.choices?.[0]
+    const modelText = completion?.message?.content
+    if (!modelText) {
+      const detail = `Groq no devolvió contenido (finish_reason: ${completion?.finish_reason || 'sin respuesta'}).`
+      console.error('Groq returned no content:', activeStage, detail)
+      return sendJson(res, 502, { error: `Respuesta vacía durante la etapa ${activeStage}.`, detail })
+    }
+    const parsed = parseModelJson(modelText)
     const inventoryById = new Map(candidates.map(item => [item.id, item]))
     const chosen = [...new Set(Array.isArray(parsed.itemIds) ? parsed.itemIds.map(String) : [])]
       .map(id => inventoryById.get(id)).filter(Boolean)
@@ -156,7 +169,8 @@ export default async function handler(req, res) {
     if (stage !== 'extras' && selected.length !== 1) return sendJson(res, 502, { error: 'Groq no pudo elegir una prenda válida para esta etapa. Inténtalo otra vez.' })
     return sendJson(res, 200, { itemIds: selected.map(item => item.id), reason: text(parsed.reason, 300) })
   } catch (error) {
-    console.error('Outfit recommendation failed:', error.message)
-    return sendJson(res, 502, { error: 'No se pudo interpretar la respuesta de Groq. Inténtalo otra vez.' })
+    const detail = text(error.message || 'Error desconocido.', 320)
+    console.error('Outfit recommendation failed:', activeStage, detail)
+    return sendJson(res, 502, { error: `No se pudo completar la etapa ${activeStage}.`, detail })
   }
 }
