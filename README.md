@@ -1,61 +1,131 @@
 # Outfit Check
 
-Aplicación web adaptable para organizar un armario personal, crear combinaciones de prendas, guardar looks y sincronizar los datos con Supabase. No incluye generación de imágenes ni servicios de pago.
+> Tu armario, tus planes, tu próximo look.
 
-## Desarrollo local
+**Outfit Check** es una aplicación web para organizar prendas, descubrir combinaciones y guardar looks. Tiene una experiencia adaptable a ordenador y móvil, puede instalarse como PWA y permite guardar los datos en el dispositivo o sincronizarlos con una cuenta de Supabase.
 
-Necesitas Node.js 20 o superior.
+## Qué puedes hacer
+
+- **Organizar el armario:** añadir, editar y eliminar prendas, con foto opcional, categoría, subtipo, color, marca y descripción.
+- **Crear outfits:** generar combinaciones según el plan y cómo te apetece vestir. Con hasta 50 prendas se usa el algoritmo ligero local; para armarios más grandes se utiliza una selección de candidatas basada en atributos, puntuaciones previas y afinidad del subtipo con la ocasión y el estado de ánimo.
+- **Descubrir inspiración:** explorar looks aleatorios del armario, valorar cada propuesta y guardar tus favoritas.
+- **Aprender de tus gustos:** las valoraciones aportan contexto para recomendar combinaciones de color y prendas en situaciones similares.
+- **Tener en cuenta el tiempo:** si lo deseas, puedes compartir la ubicación actual para consultar temperatura y condiciones meteorológicas. Se usa al generar recomendaciones y no se solicita permiso hasta que pulsas **Tiempo local**.
+- **Sincronizar y exportar:** con una sesión de Supabase, prendas, looks y valoraciones pueden guardarse en la nube. También puedes descargar una copia de prendas y looks en JSON.
+- **Instalarla en el móvil:** en iPhone y iPad se añade a la pantalla de inicio desde Safari; en ordenador puede instalarse desde Chrome o Edge.
+
+## Requisitos
+
+- Node.js 20 o superior.
+- npm.
+- Para sincronización: un proyecto de Supabase.
+- Para descripciones y recomendaciones con IA: despliegue en Vercel con las claves de Gemini y Groq configuradas.
+
+La app puede ejecutarse sin Supabase: en ese modo, los datos se guardan en el almacenamiento local del navegador y no se sincronizan entre dispositivos.
+
+## Inicio rápido
 
 ```bash
 npm install
 npm run dev
 ```
 
-Sin Supabase, las prendas y los looks se guardan en el almacenamiento local del navegador. Cada navegador mantiene sus propios datos.
+Vite mostrará la dirección local en la terminal. Para generar y previsualizar una compilación de producción:
 
-## Supabase
+```bash
+npm run build
+npm run preview
+```
 
-1. Crea un proyecto de Supabase.
-2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) en SQL Editor. El esquema crea las tablas del armario, los looks guardados y las valoraciones de outfits, activa Row Level Security y configura el bucket privado `wardrobe-photos` con permisos por usuario. Si ya tienes Supabase configurado, vuelve a ejecutar el esquema para añadir los campos y la tabla de valoraciones, y migrar las categorías antiguas del armario.
-3. Configura las variables públicas del proyecto para el build:
-   - `STORAGE_SUPABASE_URL` (también se acepta `STORAGE_VITE_PUBLIC_SUPABASE_URL`)
-   - `STORAGE_SUPABASE_PUBLISHABLE_KEY` (o `STORAGE_SUPABASE_ANON_KEY`; también se aceptan los nombres `STORAGE_VITE_PUBLIC_SUPABASE_*`)
-4. En local también se aceptan `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`; puedes copiarlas en `.env`.
-5. Añade el origen local y el dominio publicado a Authentication → URL Configuration → Redirect URLs.
+## Configuración de Supabase
 
-Para borrar los datos de una cuenta concreta y volver a cargar su armario, usa [`supabase/reset-user-data.sql`](supabase/reset-user-data.sql): sustituye `correo@ejemplo.com` por el correo de esa cuenta antes de ejecutarlo. Borra prendas, looks guardados y valoraciones de ese usuario; no elimina la cuenta ni afecta a otros usuarios. Las fotos del bucket privado deben borrarse aparte desde Storage.
+1. Crea un proyecto en [Supabase](https://supabase.com/).
+2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) desde **SQL Editor**. Configura las tablas del armario, looks y valoraciones, las políticas Row Level Security y el bucket privado `wardrobe-photos`.
+3. Copia [`.env.example`](.env.example) a `.env` y completa la URL y la clave pública de tu proyecto:
 
-Para poblar una cuenta de pruebas, ejecuta [`supabase/seed-wardrobe-30.sql`](supabase/seed-wardrobe-30.sql) y luego, si quieres ampliar el armario, [`supabase/seed-wardrobe-100.sql`](supabase/seed-wardrobe-100.sql). En cada archivo sustituye `tu_correo@ejemplo.com` por el email de la cuenta. Los datos son ficticios, incluyen atributos de ejemplo y no tienen fotos; no se envían a Gemini.
+   ```dotenv
+   STORAGE_SUPABASE_URL=https://tu-proyecto.supabase.co
+   STORAGE_SUPABASE_PUBLISHABLE_KEY=tu-clave-publica
+   ```
 
-Al iniciar sesión con correo y contraseña, la aplicación carga y guarda prendas y looks en Supabase. Las cuentas previas que todavía no tengan contraseña pueden usar “¿Olvidaste tu contraseña?” para establecer una. Sin sesión, conserva los datos localmente en el dispositivo.
+   Para desarrollo local también se aceptan `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
 
-No pongas claves `service_role`/secret, el secreto JWT ni credenciales de Postgres en variables expuestas al cliente. La app solo usa la URL y la clave pública de Supabase.
+4. En **Authentication → URL Configuration → Redirect URLs**, añade la URL local y el dominio de producción.
+5. Reinicia el servidor de desarrollo después de modificar `.env`.
 
-## Despliegue en Vercel
+La configuración solo necesita la clave pública de Supabase. **No expongas** claves `service_role` o `secret`, el secreto JWT ni credenciales de Postgres en el cliente o en variables `VITE_*`.
 
-Importa el repositorio y usa `npm run build` como comando de build y `dist` como directorio de salida. La configuración de Vite traduce las variables públicas de la integración de Supabase a la configuración que usa la app.
+Al iniciar sesión con correo y contraseña, la app intenta sincronizar los datos con Supabase. Sin sesión, conserva los datos localmente. Una cuenta antigua que aún no tenga contraseña puede usar **¿Olvidaste tu contraseña?** para establecerla.
 
-El tiempo local es opcional y no necesita secretos ni una función de servidor propia. Al pulsar **Tiempo local**, el navegador pide permiso de ubicación y consulta Open-Meteo; la ubicación precisa solo se usa para esa consulta, y las recomendaciones reciben la ciudad aproximada, la estación y las condiciones meteorológicas, sin coordenadas GPS. El permiso no se solicita automáticamente.
+### Datos de ejemplo y borrado
 
-### IA para describir prendas y recomendar looks
+- Para cargar un armario de prueba, ejecuta [`seed-wardrobe-30.sql`](supabase/seed-wardrobe-30.sql). Puedes ampliarlo con [`seed-wardrobe-100.sql`](supabase/seed-wardrobe-100.sql). En ambos archivos sustituye `tu_correo@ejemplo.com` por el correo de la cuenta. Son prendas ficticias, sin fotos.
+- Para borrar prendas, looks y valoraciones de una cuenta concreta, revisa [`reset-user-data.sql`](supabase/reset-user-data.sql), sustituye el correo de ejemplo y ejecútalo conscientemente. No elimina la cuenta. Las fotos del bucket deben borrarse aparte desde Storage.
 
-La web usa dos funciones de Vercel en `api/`: Gemini analiza la foto, o infiere atributos desde los datos de una prenda nueva sin foto, y guarda descripción y atributos en Supabase; Groq recomienda outfits usando solo datos de texto, sin enviarle imágenes. Con hasta 50 prendas Groq recibe el armario completo. En armarios mayores, el sistema puntúa todas las prendas con sus atributos, valoraciones y afinidad del subtipo con el plan y el estado de ánimo (por ejemplo, zapatillas para un plan cómodo o zapatos para uno elegante), y elige una selección variada de hasta 12 prendas para la parte superior o los extras, y hasta 9 para la parte inferior o el calzado. En el modo con cuenta, la aplicación espera 25 segundos entre generaciones. Para habilitarlo:
+## Funciones de IA
 
-1. En la configuración del proyecto de Vercel, añade `GEMINI_API_KEY` y `GROQ_API_KEY` como variables de entorno para Production y Preview. Puedes crear las claves en Google AI Studio y Groq Console. Opcionalmente, configura `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` o `GROQ_MODEL` para elegir otros modelos. Si Gemini está saturado, la función prueba automáticamente modelos Flash alternativos.
-2. Asegúrate de que Vercel tiene `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY` (también se acepta `SUPABASE_ANON_KEY`) además de la configuración pública usada por Vite. Las claves Gemini y Groq son privadas y no deben llevar el prefijo `VITE_`.
-3. Ejecuta de nuevo `supabase/schema.sql` en Supabase para añadir `description` y `ai_attributes` (además de `subcategory`), y vuelve a desplegar en Vercel.
+Las funciones de servidor están en [`api/`](api/) y se despliegan en Vercel:
 
-La IA necesita una sesión iniciada y conexión con Supabase. La página **Inspiración** propone outfits para distintas ocasiones, estaciones y temperaturas. Cada puntuación se guarda junto con el contexto y una copia de las prendas del outfit; Groq resume las valoraciones por situación y las usa al recomendar nuevos looks. Sin sesión, las puntuaciones solo se guardan en ese navegador. Las prendas añadidas antes de habilitar la IA conservan sus datos; al editar una prenda y guardar una foto se genera su descripción. El nivel gratuito de Gemini puede tener límites y Google indica que puede usar los datos enviados para mejorar sus productos; revisa sus condiciones antes de subir fotos privadas.
+- `describe-garment.js` usa **Gemini** para describir una foto o inferir atributos a partir de los datos de una prenda nueva. Guarda descripción y atributos en Supabase.
+- `recommend-outfit.js` usa **Groq** para generar recomendaciones personalizadas. Recibe información textual de las prendas candidatas; no recibe las imágenes.
+- [`server/ai-utils.js`](server/ai-utils.js) reúne utilidades compartidas por las funciones.
 
-El armario separa **Parte de arriba**, **Parte de abajo**, **Cuerpo completo**, **Calzado**, **Bolsos** y **Accesorios**, con subtipos como sandalias, zapatillas, pantalones o pendientes. **Inspiración** crea combinaciones aleatorias del armario sin llamar a la IA. Groq construye las recomendaciones personalizadas en etapas y solo recibe las prendas candidatas para cada etapa; usa las valoraciones guardadas y las prendas de cada outfit como contexto para aprender los gustos del usuario. Los outfits incluyen calzado y una prenda de cuerpo completo o una parte de arriba más una de abajo; el bolso es opcional (máximo uno). Se pueden combinar varios accesorios, pero los que normalmente se llevan de uno en uno (pendientes, collares, relojes, cinturones, sombreros, bufandas y gafas) tienen un máximo de uno por tipo. Pulseras y anillos sí pueden repetirse.
+Para habilitar estas funciones, configura en Vercel las siguientes variables:
 
-## Instalar en ordenador, iPhone o iPad
+| Variable | Uso |
+| --- | --- |
+| `GEMINI_API_KEY` | Clave privada de Google AI Studio para describir prendas. |
+| `GROQ_API_KEY` | Clave privada de Groq para recomendar outfits. |
+| `SUPABASE_URL` | URL del proyecto, necesaria para las funciones del servidor. |
+| `SUPABASE_PUBLISHABLE_KEY` o `SUPABASE_ANON_KEY` | Clave pública de Supabase para validar y guardar datos del usuario. |
 
-La aplicación es una PWA instalable. Publícala en Vercel (HTTPS obligatorio) y abre el dominio publicado:
+Opcionalmente puedes cambiar los modelos con `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` y `GROQ_MODEL`. Si Gemini está saturado, la función prueba modelos Flash alternativos. Las claves de IA son privadas: no uses el prefijo `VITE_`.
 
-- **Windows/macOS:** abre el sitio en Chrome o Edge y selecciona **Instalar Outfit Check** en el menú del navegador. Algunos navegadores muestran un icono de instalación junto a la barra de direcciones.
-- **iPhone/iPad:** abre el sitio en Safari, toca **Compartir** y selecciona **Añadir a pantalla de inicio**. iOS/iPadOS no instala la PWA desde Chrome; debe hacerse desde Safari.
+La recomendación personalizada requiere sesión y conexión con Supabase. El algoritmo usa atributos, contexto de uso y valoraciones. Con hasta 50 prendas Groq recibe el armario completo; por encima de ese umbral se puntúan las prendas y se envían candidatas variadas: hasta 12 para la parte superior o extras y hasta 9 para la parte inferior o el calzado. En el modo con cuenta se aplica un intervalo de 25 segundos entre generaciones.
 
-La aplicación conserva la pantalla inicial para poder abrirla sin conexión, pero la autenticación y la sincronización con Supabase necesitan internet. La instalación PWA no genera un paquete de App Store ni un instalador nativo de Windows/macOS.
+Las valoraciones de inspiración se guardan con su contexto y una copia de las prendas del look. Sin sesión, se conservan solo en ese navegador. La ubicación precisa se utiliza para consultar Open-Meteo; las recomendaciones reciben la ciudad aproximada, estación y condiciones meteorológicas, no las coordenadas GPS. La geolocalización es opcional.
 
-Si habías desplegado la antigua Edge Function `virtual-try-on`, elimínala desde Supabase o con `supabase functions delete virtual-try-on` y borra el secreto `FASHN_API_KEY` de Edge Functions → Secrets. Ejecutar el esquema también elimina la tabla y función SQL de límite diario que usaba la integración anterior.
+> **Privacidad:** al guardar una foto con una cuenta conectada, la imagen se envía a Gemini para describir la prenda. Groq recibe texto para recomendar outfits. Revisa las condiciones de los proveedores antes de subir imágenes privadas; el nivel gratuito de Gemini puede tener límites y condiciones de uso de datos propias.
+
+## Publicar en Vercel
+
+1. Importa el repositorio en Vercel.
+2. Usa `npm run build` como comando de compilación y `dist` como directorio de salida.
+3. Añade las variables públicas de Supabase para Vite y las variables privadas de Supabase, Gemini y Groq indicadas arriba.
+4. Configura las Redirect URLs de Supabase con el dominio publicado.
+5. Vuelve a desplegar tras cambiar variables de entorno o el esquema de Supabase.
+
+La geolocalización consulta Open-Meteo desde el navegador y no requiere claves propias ni una función de servidor adicional.
+
+## Instalar como aplicación
+
+Outfit Check es una PWA. Para instalarla desde producción, el sitio debe estar publicado mediante HTTPS.
+
+- **iPhone o iPad:** abre la web en Safari, toca **Compartir** y selecciona **Añadir a pantalla de inicio**. En iOS, la instalación debe hacerse desde Safari.
+- **Windows o macOS:** abre el sitio en Chrome o Edge y selecciona **Instalar Outfit Check** en el menú del navegador, o utiliza el icono de instalación de la barra de direcciones si aparece.
+
+La pantalla inicial puede abrirse sin conexión, pero la autenticación y la sincronización con Supabase necesitan internet. La PWA no crea una aplicación de App Store ni un instalador nativo de escritorio.
+
+## Estructura del proyecto
+
+```text
+.
+├── api/                    # Funciones de Vercel para Gemini y Groq
+├── public/                 # Iconos, manifiesto PWA y service worker
+├── server/                 # Utilidades compartidas del servidor
+├── src/
+│   ├── components/         # Componentes de interfaz reutilizables
+│   ├── data/               # Catálogo, ocasiones y momentos de inspiración
+│   ├── lib/                 # Supabase, IA, tiempo, fotos, armario y puntuación
+│   ├── main.jsx             # Aplicación y coordinación de pantallas y flujos
+│   └── styles.css           # Estilos y adaptación a móvil/escritorio
+├── supabase/               # Esquema y scripts para gestionar datos de prueba
+├── .env.example            # Plantilla de configuración local
+└── vite.config.js          # Vite y configuración pública de Supabase
+```
+
+## Notas de mantenimiento
+
+- El esquema de Supabase está en [`supabase/schema.sql`](supabase/schema.sql). Si actualizas una instalación existente, vuelve a ejecutarlo para aplicar las columnas, tablas y políticas más recientes.
+- La app anterior podía usar una Edge Function `virtual-try-on`. Si aún existe en tu proyecto, elimínala con `supabase functions delete virtual-try-on` y borra el secreto `FASHN_API_KEY` de **Edge Functions → Secrets**. El esquema actual elimina también la tabla y función SQL del límite diario de aquella integración.
+- No subas `.env` ni claves privadas al repositorio.
