@@ -1,6 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#e8b8b1"/>
-  <path d="M256 107c-36 0-63 26-63 59 0 22 11 39 32 52 13 8 20 16 21 29v12" fill="none" stroke="#fffaf7" stroke-linecap="round" stroke-width="25"/>
-  <path d="M110 326 256 246l146 80-146 82z" fill="#fffaf7" stroke="#fffaf7" stroke-linejoin="round" stroke-width="18"/>
-  <path d="M171 360v48c50 31 120 31 170 0v-48" fill="none" stroke="#fffaf7" stroke-linecap="round" stroke-linejoin="round" stroke-width="20"/>
+  <rect width="512" height="512" rx="128" fill="#f6f1e9"/>
+  <rect x="28" y="28" width="456" height="456" rx="112" fill="#713f4c"/>
+  <rect x="43" y="43" width="426" height="426" rx="99" fill="none" stroke="#d9bd91" stroke-opacity=".8" stroke-width="3"/>
+  <text x="250" y="321" text-anchor="middle" fill="#fff9ef" font-family="Georgia, 'Times New Roman', serif" font-size="214" font-style="italic" letter-spacing="-28">OC</text>
+  <path d="M386 105v38m-19-19h38m-32-13 26 26m0-26-26 26" fill="none" stroke="#e6cfaa" stroke-linecap="round" stroke-width="5"/>
+  <circle cx="117" cy="385" r="4" fill="#e6cfaa"/>
+  <circle cx="394" cy="384" r="4" fill="#e6cfaa"/>
 </svg>
