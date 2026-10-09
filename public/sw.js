@@ -1,4 +1,4 @@
-const CACHE_NAME = 'outfit-check-shell-v1'
+const CACHE_NAME = 'outfit-check-shell-v2'
 const APP_SHELL = ['/']
 
 self.addEventListener('install', event => {

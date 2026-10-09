@@ -323,10 +323,11 @@ function App() {
         const subtype = item.subcategory || ''
         const heavy = ['Abrigo', 'Gabardina'].includes(subtype)
         const light = ['Blazer', 'Chaleco'].includes(subtype)
-        if (thermalFeel <= 7) score += heavy ? 7 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 3 : -2
-        else if (thermalFeel <= 13) score += heavy ? 5 : ['Chaqueta', 'Cazadora', 'Gabardina'].includes(subtype) ? 4 : light ? 1 : 0
-        else if (thermalFeel <= 18) score += ['Chaqueta', 'Cazadora', 'Gabardina', 'Blazer'].includes(subtype) ? 3 : heavy ? -1 : 1
-        else if (thermalFeel <= 22) score += light ? 2 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 1 : -2
+        const warmKnit = ['Jersey', 'Sudadera', 'Cárdigan'].includes(subtype)
+        if (thermalFeel <= 7) score += heavy ? 7 : warmKnit ? 5 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 3 : -2
+        else if (thermalFeel <= 13) score += heavy ? 5 : warmKnit ? 4 : ['Chaqueta', 'Cazadora', 'Gabardina'].includes(subtype) ? 4 : light ? 1 : 0
+        else if (thermalFeel <= 18) score += ['Chaqueta', 'Cazadora', 'Gabardina', 'Blazer', 'Sobrecamisa'].includes(subtype) ? 3 : warmKnit ? 2 : heavy ? -1 : 1
+        else if (thermalFeel <= 22) score += light ? 2 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 1 : warmKnit ? 0 : -2
         else score += -5
       }
       if ([51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99].includes(currentWeather?.weatherCode)) {

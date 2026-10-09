@@ -28,12 +28,12 @@ set category = case
   when category = 'Zapatos' then 'Calzado'
   when category = 'Prendas' and lower(coalesce(subcategory, '')) in ('vestido', 'mono', 'peto') then 'Cuerpo completo'
   when category = 'Prendas' and lower(coalesce(subcategory, '')) in ('pantalón', 'pantalon', 'vaquero', 'falda', 'shorts', 'leggings') then 'Parte de abajo'
-  when category in ('Prendas', 'Parte de arriba') and lower(coalesce(subcategory, '')) in ('abrigo', 'chaqueta', 'cazadora', 'gabardina', 'blazer', 'chaleco') then 'Ropa de abrigo'
+  when category in ('Prendas', 'Parte de arriba') and lower(coalesce(subcategory, '')) in ('jersey', 'sudadera', 'cárdigan', 'cardigan', 'sobrecamisa', 'poncho', 'capa', 'abrigo', 'chaqueta', 'cazadora', 'gabardina', 'blazer', 'chaleco') then 'Ropa de abrigo'
   when category = 'Prendas' then 'Parte de arriba'
   else category
 end
 where category in ('Prendas', 'Zapatos')
-   or (category = 'Parte de arriba' and lower(coalesce(subcategory, '')) in ('abrigo', 'chaqueta', 'cazadora', 'gabardina', 'blazer', 'chaleco'));
+   or (category = 'Parte de arriba' and lower(coalesce(subcategory, '')) in ('jersey', 'sudadera', 'cárdigan', 'cardigan', 'sobrecamisa', 'poncho', 'capa', 'abrigo', 'chaqueta', 'cazadora', 'gabardina', 'blazer', 'chaleco'));
 alter table public.wardrobe_items add constraint wardrobe_items_category_check
   check (category in ('Parte de arriba', 'Ropa de abrigo', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios'));
 notify pgrst, 'reload schema';

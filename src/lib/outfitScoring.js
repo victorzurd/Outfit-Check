@@ -126,11 +126,12 @@ export const shortlistAiCandidates = (candidates, stage, situation, selected, fe
       const subtype = item.subcategory || ''
       const heavy = ['Abrigo', 'Gabardina'].includes(subtype)
       const light = ['Blazer', 'Chaleco'].includes(subtype)
+      const warmKnit = ['Jersey', 'Sudadera', 'Cárdigan'].includes(subtype)
       if (Number.isFinite(temperature)) {
-        if (temperature <= 7) score += heavy ? 9 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 4 : -3
-        else if (temperature <= 13) score += heavy ? 6 : ['Chaqueta', 'Cazadora', 'Gabardina'].includes(subtype) ? 5 : light ? 1 : 0
-        else if (temperature <= 18) score += ['Chaqueta', 'Cazadora', 'Gabardina'].includes(subtype) ? 4 : light ? 2 : heavy ? -2 : 0
-        else if (temperature <= 22) score += light ? 3 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 1 : -3
+        if (temperature <= 7) score += heavy ? 9 : warmKnit ? 6 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 4 : -3
+        else if (temperature <= 13) score += heavy ? 6 : warmKnit ? 5 : ['Chaqueta', 'Cazadora', 'Gabardina'].includes(subtype) ? 5 : light ? 1 : 0
+        else if (temperature <= 18) score += ['Chaqueta', 'Cazadora', 'Gabardina', 'Sobrecamisa'].includes(subtype) ? 4 : warmKnit ? 3 : light ? 2 : heavy ? -2 : 0
+        else if (temperature <= 22) score += light ? 3 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 1 : warmKnit ? 0 : -3
         else score -= 7
       }
       if (/lluv|llov|lluvia|rain|nieve|snow|nevada/i.test(String(situation.weather || '')) && ['Gabardina', 'Abrigo', 'Chaqueta'].includes(subtype)) score += 2.5
