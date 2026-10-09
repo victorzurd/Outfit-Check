@@ -446,3 +446,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .inspiration-page{background:#f5eee7}.inspiration-card{background:#392b32}.inspiration-card-media{background:#e9ded2}.inspiration-card-count{border:1px solid #e4d1b5;background:#fff9ec;color:#71434c}.inspiration-card-copy{background:linear-gradient(145deg,#59414a,#352931 82%)}.inspiration-context span{border-color:#ffffff45;background:#fffaf018}.inspiration-card-copy h2{font-family:'Cormorant Garamond',Georgia,serif!important;color:#fff8f0}.inspiration-rating button{color:#85505b}.inspiration-rating button.rated{color:#b08b58}.photo-pagination{border-color:#d8bd98;background:#45343fc9;color:#fff8ef}.photo-progress i.active{background:#e4c99c}
 .app-footer{border-color:#e8ded4;color:#948589}
 @media(max-width:560px){.inspiration-heading h1{color:#fff;text-shadow:0 1px 8px #21191a55}}
+.brand-mark{display:block;flex:none;overflow:hidden;padding:0;border:0;border-radius:11px;background:none;box-shadow:0 5px 13px #60384622;font-size:0;letter-spacing:0}
+.brand-mark:after{display:none}
+.brand-mark img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.top-login{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;padding:0 16px;border:1px solid #d4b783;border-radius:999px;background:linear-gradient(135deg,#8f5662,#663747);color:#fffaf2;font:700 11px 'Manrope','DM Sans',sans-serif;box-shadow:0 5px 14px #62394520;transition:transform .18s,box-shadow .18s,background .18s}
+.top-login:hover{transform:translateY(-1px);background:linear-gradient(135deg,#78434f,#512e3d);box-shadow:0 8px 18px #6239452c}
+.top-login svg{width:15px;height:15px;color:#e8d2ad}
+@media(max-width:780px){.top-login{display:none}}
