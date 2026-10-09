@@ -124,9 +124,10 @@ export default async function handler(req, res) {
     const stage = req.body?.stage
     activeStage = stage || activeStage
     const stageInstructions = {
-      complete: 'Elige el outfit completo usando la lista entera. Debe incluir exactamente un Calzado y una prenda de Cuerpo completo O una Parte de arriba más una Parte de abajo. Puede llevar cero o un Bolso. Puede incluir varios Accesorios; máximo uno de Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos pueden repetirse. No combines Cuerpo completo con partes de arriba o abajo. Puedes añadir una capa de Parte de arriba al conjunto separado.',
+      complete: 'Elige el outfit completo usando la lista entera. Debe incluir exactamente un Calzado y una prenda de Cuerpo completo O una Parte de arriba más una Parte de abajo. Puedes añadir cero o una prenda de Ropa de abrigo como capa opcional. Decide si hace falta y qué tipo conviene según la temperatura aparente (usa la temperatura real si no hay sensación térmica), la estación y la lluvia: abrigo/gabardina con frío, chaqueta/cazadora con tiempo fresco, blazer o chaleco con tiempo templado; omite la capa si hace calor. No añadas abrigo por sistema. Puede llevar cero o un Bolso. Puede incluir varios Accesorios; máximo uno de Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos pueden repetirse. No combines Cuerpo completo con partes de arriba o abajo.',
       base: 'Elige exactamente UNA sola opción para iniciar el outfit: una Parte de arriba o una prenda de Cuerpo completo. Si eliges Cuerpo completo, no se añadirán partes de arriba ni de abajo. Prioriza una base que permita crear una paleta equilibrada con las prendas candidatas disponibles; no elijas un color solo porque coincida con muchas otras prendas.',
       bottom: 'Elige exactamente una Parte de abajo que combine con la parte de arriba ya elegida. Compara sus familias de color; evita repetir el mismo color dominante si hay una alternativa armónica. No repitas ni sustituyas las prendas ya seleccionadas.',
+      outerwear: 'La ropa de abrigo es una capa opcional: elige cero o una, nunca más. Prioriza la temperatura aparente; si falta, usa la temperatura. Con 10 °C o menos, elige una capa cálida (Abrigo o Gabardina) siempre que haya una candidata adecuada. Entre 11 y 15 °C, normalmente añade Abrigo, Chaqueta, Cazadora o Gabardina; entre 16 y 20 °C, prefiere Chaqueta, Cazadora o Gabardina ligera. Con temperatura templada puedes elegir Blazer o Chaleco solo si encaja con el plan. Por encima de 22 °C omite la capa, salvo lluvia que justifique una prenda ligera. Si no hace frío ni llueve, puedes omitirla. Combínala con el outfit elegido y no devuelvas más de un ID.',
       footwear: 'Elige exactamente un Calzado que combine con todas las prendas ya seleccionadas. Úsalo para equilibrar la paleta con un neutro o repetir discretamente un color de acento; evita que todo el outfit quede en una sola familia de color.',
       extras: 'Elige cero o un Bolso y los Accesorios que mejor completen el outfit. Prefiere un neutro o un accesorio que repita un único acento ya presente; no añadas un color nuevo sin motivo. Como máximo uno de cada tipo que se lleve de uno en uno: Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos sí pueden repetirse. Devuelve solo artículos de la lista candidata; la lista puede quedar vacía.',
     }
@@ -138,12 +139,13 @@ export default async function handler(req, res) {
       id: text(item?.id, 80), name: text(item?.name, 80), category: text(item?.category, 40),
       subcategory: text(item?.subcategory, 60), color: text(item?.color, 100),
       description: text(item?.description, 450), attributes: item?.attributes && typeof item.attributes === 'object' ? item.attributes : {},
-    })).filter(item => item.id && item.name && ['Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios'].includes(item.category))
+    })).filter(item => item.id && item.name && ['Parte de arriba', 'Ropa de abrigo', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios'].includes(item.category))
     if (!wardrobe.length) return sendJson(res, 400, { error: 'No hay prendas válidas para combinar.' })
     const validStages = {
       complete: () => true,
       base: item => ['Parte de arriba', 'Cuerpo completo'].includes(item.category),
       bottom: item => item.category === 'Parte de abajo',
+      outerwear: item => item.category === 'Ropa de abrigo',
       footwear: item => item.category === 'Calzado',
       extras: item => ['Bolsos', 'Accesorios'].includes(item.category),
     }
@@ -157,7 +159,7 @@ export default async function handler(req, res) {
     if (stage === 'bottom' && !chosenContext.some(item => item.category === 'Parte de arriba')) {
       return sendJson(res, 400, { error: 'La etapa de parte de abajo necesita una parte de arriba ya elegida.' })
     }
-    if (['footwear', 'extras'].includes(stage) && !chosenContext.length) {
+    if (['outerwear', 'footwear', 'extras'].includes(stage) && !chosenContext.length) {
       return sendJson(res, 400, { error: 'Esta etapa necesita las prendas seleccionadas anteriormente.' })
     }
 
@@ -237,6 +239,8 @@ Considera también situación, comodidad, estación, temperatura y formalidad. P
         return sendJson(res, 502, { error: 'Groq no completó las prendas imprescindibles del outfit. Inténtalo otra vez.' })
       }
       selected = fullBody ? [fullBody] : [top, bottom]
+      const outerwear = chosen.find(item => item.category === 'Ropa de abrigo')
+      if (outerwear) selected.push(outerwear)
       selected.push(shoe)
       if (!fullBody) selected.push(...chosen.filter(item => item.category === 'Parte de arriba' && item.id !== top.id))
       const bag = chosen.find(item => item.category === 'Bolsos')
@@ -253,6 +257,7 @@ Considera también situación, comodidad, estación, temperatura y formalidad. P
     }
     if (stage === 'base') selected = chosen.filter(item => ['Parte de arriba', 'Cuerpo completo'].includes(item.category)).slice(0, 1)
     if (stage === 'bottom') selected = chosen.filter(item => item.category === 'Parte de abajo').slice(0, 1)
+    if (stage === 'outerwear') selected = chosen.filter(item => item.category === 'Ropa de abrigo').slice(0, 1)
     if (stage === 'footwear') selected = chosen.filter(item => item.category === 'Calzado').slice(0, 1)
     if (stage === 'extras') {
       let bagAdded = false
@@ -271,7 +276,7 @@ Considera también situación, comodidad, estación, temperatura y formalidad. P
         }
       }
     }
-    if (stage !== 'extras' && selected.length !== 1) return sendJson(res, 502, { error: 'Groq no pudo elegir una prenda válida para esta etapa. Inténtalo otra vez.' })
+    if (!['extras', 'outerwear'].includes(stage) && selected.length !== 1) return sendJson(res, 502, { error: 'Groq no pudo elegir una prenda válida para esta etapa. Inténtalo otra vez.' })
     return sendJson(res, 200, { itemIds: selected.map(item => item.id), reason: text(parsed.reason, 300) })
   } catch (error) {
     const detail = text(error.message || 'Error desconocido.', 320)

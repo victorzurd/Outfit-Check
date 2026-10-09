@@ -12,10 +12,13 @@ export const readLocal = (key, fallback = []) => {
 }
 export const normalizeWardrobeItem = item => {
   if (item.category === 'Zapatos') return { ...item, category: 'Calzado' }
-  if (item.category !== 'Prendas') return item
   const subtype = String(item.subcategory || '').toLocaleLowerCase('es')
+  const outerwear = ['abrigo', 'chaqueta', 'cazadora', 'gabardina', 'blazer', 'chaleco'].includes(subtype)
+  if (item.category === 'Parte de arriba' && outerwear) return { ...item, category: 'Ropa de abrigo' }
+  if (item.category !== 'Prendas') return item
   const category = ['vestido', 'mono', 'peto'].includes(subtype) ? 'Cuerpo completo'
-    : ['pantalón', 'pantalon', 'vaquero', 'falda', 'shorts', 'leggings'].includes(subtype) ? 'Parte de abajo' : 'Parte de arriba'
+    : ['pantalón', 'pantalon', 'vaquero', 'falda', 'shorts', 'leggings'].includes(subtype) ? 'Parte de abajo'
+      : outerwear ? 'Ropa de abrigo' : 'Parte de arriba'
   return { ...item, category }
 }
 export const readLocalItems = () => {

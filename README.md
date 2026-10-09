@@ -7,6 +7,7 @@
 ## Qué puedes hacer
 
 - **Organizar el armario:** añadir, editar y eliminar prendas, con foto opcional, categoría, subtipo, color, marca y descripción.
+- **Separar las capas:** las prendas normales de arriba se guardan aparte de la ropa de abrigo, que el generador puede añadir u omitir.
 - **Crear outfits:** generar combinaciones según el plan y cómo te apetece vestir. Con hasta 50 prendas se usa el algoritmo ligero local; para armarios más grandes se utiliza una selección de candidatas basada en atributos, puntuaciones previas y afinidad del subtipo con la ocasión y el estado de ánimo.
 - **Descubrir inspiración:** explorar looks aleatorios del armario, valorar cada propuesta y guardar tus favoritas.
 - **Aprender de tus gustos:** las valoraciones aportan contexto para recomendar combinaciones de color y prendas en situaciones similares.
@@ -40,7 +41,7 @@ npm run preview
 ## Configuración de Supabase
 
 1. Crea un proyecto en [Supabase](https://supabase.com/).
-2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) desde **SQL Editor**. Configura las tablas del armario, looks y valoraciones, las políticas Row Level Security y el bucket privado `wardrobe-photos`.
+2. Ejecuta [`supabase/schema.sql`](supabase/schema.sql) desde **SQL Editor**. Configura las tablas del armario, looks y valoraciones, las políticas Row Level Security y el bucket privado `wardrobe-photos`. También migra chaquetas, abrigos, cazadoras, gabardinas, blazers y chalecos existentes a **Ropa de abrigo**.
 3. Copia [`.env.example`](.env.example) a `.env` y completa la URL y la clave pública de tu proyecto:
 
    ```dotenv
@@ -81,7 +82,7 @@ Para habilitar estas funciones, configura en Vercel las siguientes variables:
 
 Opcionalmente puedes cambiar los modelos con `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` y `GROQ_MODEL`. Si Gemini está saturado, la función prueba modelos Flash alternativos. Las claves de IA son privadas: no uses el prefijo `VITE_`.
 
-La recomendación personalizada requiere sesión y conexión con Supabase. El algoritmo usa atributos, contexto de uso y valoraciones. Con hasta 50 prendas Groq recibe el armario completo; por encima de ese umbral se puntúan las prendas y se envían candidatas variadas: hasta 12 para la parte superior o extras y hasta 9 para la parte inferior o el calzado. En el modo con cuenta se aplica un intervalo de 25 segundos entre generaciones.
+La recomendación personalizada requiere sesión y conexión con Supabase. El algoritmo usa atributos, contexto de uso y valoraciones. Con hasta 50 prendas Groq recibe el armario completo; por encima de ese umbral se puntúan las prendas y se envían candidatas variadas por etapa, incluida la ropa de abrigo. La capa es opcional: se selecciona por la temperatura aparente (o la temperatura real si no está disponible), la lluvia, la estación, el subtipo y el plan. En general, prioriza abrigos y gabardinas con frío, chaquetas con tiempo fresco y capas ligeras con temperatura templada; con calor procura omitirla. En el modo con cuenta se aplica un intervalo de 25 segundos entre generaciones.
 
 Las valoraciones de inspiración se guardan con su contexto y una copia de las prendas del look. Sin sesión, se conservan solo en ese navegador. La ubicación precisa se utiliza para consultar Open-Meteo; las recomendaciones reciben la ciudad aproximada, estación y condiciones meteorológicas, no las coordenadas GPS. La geolocalización es opcional.
 
@@ -115,7 +116,7 @@ La pantalla inicial puede abrirse sin conexión, pero la autenticación y la sin
 ├── server/                 # Utilidades compartidas del servidor
 ├── src/
 │   ├── components/         # Componentes de interfaz reutilizables
-│   ├── data/               # Catálogo, ocasiones y momentos de inspiración
+│   ├── data/               # Catálogo, subtipos, perfiles de estilo y momentos de inspiración
 │   ├── lib/                 # Supabase, IA, tiempo, fotos, armario y puntuación
 │   ├── main.jsx             # Aplicación y coordinación de pantallas y flujos
 │   └── styles.css           # Estilos y adaptación a móvil/escritorio

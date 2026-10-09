@@ -7,7 +7,7 @@ import {
 import './styles.css'
 import InspirationPhotoCarousel from './components/InspirationPhotoCarousel.jsx'
 import InspirationRating from './components/InspirationRating.jsx'
-import { categories, itemTypes, singleWearAccessories, defaultSubcategory, occasions } from './data/catalog.js'
+import { categories, itemTypes, singleWearAccessories, defaultSubcategory, occasions, subtypeStyleProfiles, styleDimensions } from './data/catalog.js'
 import { inspirationMoments } from './data/inspiration.js'
 import { seasonForLatitude, weatherDescription, cityFromCoordinates } from './lib/weather.js'
 import { localItemsKey, localLooksKey, feedbackStorageKey, readFeedback, readLocal, readLocalItems } from './lib/storage.js'
@@ -317,9 +317,22 @@ function App() {
       }
       const profile = subtypeStyleProfiles[item.category]?.[item.subcategory]
       if (profile) score += styleDimensions.reduce((total, dimension) => total + (styleContext[dimension] || 0) * (profile[dimension] || 0), 0) * 2
+      const thermalValue = situation.apparentTemperatureC ?? situation.temperatureC
+      const thermalFeel = thermalValue === null || thermalValue === undefined || thermalValue === '' ? NaN : Number(thermalValue)
+      if (item.category === 'Ropa de abrigo' && Number.isFinite(thermalFeel)) {
+        const subtype = item.subcategory || ''
+        const heavy = ['Abrigo', 'Gabardina'].includes(subtype)
+        const light = ['Blazer', 'Chaleco'].includes(subtype)
+        if (thermalFeel <= 7) score += heavy ? 7 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 3 : -2
+        else if (thermalFeel <= 13) score += heavy ? 5 : ['Chaqueta', 'Cazadora', 'Gabardina'].includes(subtype) ? 4 : light ? 1 : 0
+        else if (thermalFeel <= 18) score += ['Chaqueta', 'Cazadora', 'Gabardina', 'Blazer'].includes(subtype) ? 3 : heavy ? -1 : 1
+        else if (thermalFeel <= 22) score += light ? 2 : ['Chaqueta', 'Cazadora'].includes(subtype) ? 1 : -2
+        else score += -5
+      }
       if ([51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99].includes(currentWeather?.weatherCode)) {
         if (['Botas', 'Botines'].includes(item.subcategory)) score += 1.5
         if (['Sandalias', 'Chanclas'].includes(item.subcategory)) score -= 2
+        if (item.category === 'Ropa de abrigo') score += ['Gabardina', 'Abrigo', 'Chaqueta'].includes(item.subcategory) ? 2 : 0.5
       }
       const families = colorFamiliesFor(item)
       score += families.reduce((total, family) => total + (colorPreferences.families.get(family) || 0) * 0.8, 0)
@@ -353,6 +366,16 @@ function App() {
       const bottom = pick('Parte de abajo', [top])
       if (!bottom) throw new Error('Para crear un outfit necesitas una parte de arriba y una de abajo, o una prenda de cuerpo completo.')
       selected.push(top, bottom)
+    }
+    const thermalValue = situation.apparentTemperatureC ?? situation.temperatureC
+    const thermalFeel = thermalValue === null || thermalValue === undefined || thermalValue === '' ? NaN : Number(thermalValue)
+    const rainOrSnow = [51, 53, 55, 61, 63, 65, 71, 73, 75, 77, 80, 81, 82, 85, 86].includes(currentWeather?.weatherCode)
+    const layerChance = Number.isFinite(thermalFeel)
+      ? thermalFeel <= 7 ? 0.98 : thermalFeel <= 13 ? 0.9 : thermalFeel <= 18 ? 0.65 : thermalFeel <= 22 ? 0.25 : 0.03
+      : 0.25
+    if (items.some(item => item.category === 'Ropa de abrigo') && (Math.random() < layerChance || (rainOrSnow && (!Number.isFinite(thermalFeel) || thermalFeel <= 24)))) {
+      const outerwear = pick('Ropa de abrigo', selected)
+      if (outerwear) selected.push(outerwear)
     }
     const shoes = pick('Calzado', selected)
     if (!shoes) throw new Error('Añade al menos un calzado a tu armario para completar el outfit.')
@@ -427,6 +450,7 @@ function App() {
 
     const base = await chooseStage('base', ['Parte de arriba', 'Cuerpo completo'])
     if (base[0].category === 'Parte de arriba') await chooseStage('bottom', ['Parte de abajo'])
+    await chooseStage('outerwear', ['Ropa de abrigo'], true)
     await chooseStage('footwear', ['Calzado'])
     await chooseStage('extras', ['Bolsos', 'Accesorios'], true)
     return { items: resolveIds({ itemIds: selected.map(item => item.id) }), reason: reasons.join(' ') }

@@ -1,8 +1,9 @@
-export const categories = ['Parte de arriba', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios']
+export const categories = ['Parte de arriba', 'Ropa de abrigo', 'Parte de abajo', 'Cuerpo completo', 'Calzado', 'Bolsos', 'Accesorios']
 export const accessoryTypes = ['Pendientes', 'Pulseras', 'Collares', 'Anillos', 'Relojes', 'Cinturones', 'Sombreros', 'Bufandas', 'Gafas', 'Otros']
 export const singleWearAccessories = new Set(['Pendientes', 'Collares', 'Relojes', 'Cinturones', 'Sombreros', 'Bufandas', 'Gafas', 'Otros'])
 export const itemTypes = {
-  'Parte de arriba': ['Camiseta', 'Camisa', 'Blusa', 'Top', 'Jersey', 'Sudadera', 'Chaqueta', 'Abrigo', 'Chaleco', 'Otros'],
+  'Parte de arriba': ['Camiseta', 'Camisa', 'Blusa', 'Top', 'Jersey', 'Sudadera', 'Otros'],
+  'Ropa de abrigo': ['Abrigo', 'Chaqueta', 'Cazadora', 'Gabardina', 'Blazer', 'Chaleco', 'Otros'],
   'Parte de abajo': ['Pantalón', 'Vaquero', 'Falda', 'Shorts', 'Leggings', 'Otros'],
   'Cuerpo completo': ['Vestido', 'Mono', 'Peto', 'Otros'],
   Calzado: ['Zapatillas', 'Deportivas', 'Sandalias', 'Botas', 'Botines', 'Tacones', 'Mocasines', 'Bailarinas', 'Chanclas', 'Zapatos', 'Otros'],
@@ -42,7 +43,11 @@ export const subtypeStyleProfiles = {
     Camiseta: { comfort: 0.5, casual: 0.8 }, Camisa: { polished: 0.65, formal: 0.25 },
     Blusa: { polished: 0.7, formal: 0.25 }, Top: { casual: 0.55, festive: 0.35 },
     Jersey: { comfort: 0.8, casual: 0.35 }, Sudadera: { comfort: 0.8, casual: 0.9, polished: -0.35 },
-    Chaqueta: { polished: 0.35, practical: 0.55 }, Abrigo: { practical: 0.85, polished: 0.25 }, Chaleco: { polished: 0.3 },
+  },
+  'Ropa de abrigo': {
+    Abrigo: { practical: 1, polished: 0.25 }, Chaqueta: { practical: 0.55, polished: 0.35 },
+    Cazadora: { practical: 0.6, casual: 0.4 }, Gabardina: { practical: 0.8, polished: 0.5 },
+    Blazer: { polished: 0.8, formal: 0.35 }, Chaleco: { practical: 0.25, polished: 0.3 },
   },
   'Parte de abajo': {
     Pantalón: { practical: 0.25, polished: 0.15 }, Vaquero: { comfort: 0.4, casual: 0.8, formal: -0.45 },
