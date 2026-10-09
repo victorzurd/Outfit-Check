@@ -78,7 +78,7 @@ export default async function handler(req, res) {
     const auth = await requireUser(req)
     if (auth.error) return sendJson(res, auth.status, { error: auth.error })
 
-    const { inventory, occasion, mood, temperatureC, season, selectedItems = [] } = req.body || {}
+    const { inventory, occasion, mood, temperatureC, apparentTemperatureC, season, weather, location, timezone, selectedItems = [] } = req.body || {}
     const stage = req.body?.stage
     activeStage = stage || activeStage
     const stageInstructions = {
@@ -130,9 +130,14 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model, temperature: 0.35, reasoning_effort: 'low', max_completion_tokens: 400,
         messages: [
-          { role: 'system', content: `Eres estilista personal y trabajas en la etapa "${stage}" de un outfit. Elige EXCLUSIVAMENTE IDs de candidates; no inventes ni repitas prendas. ${stageInstructions[stage]} Considera la situación, las prendas que ya se eligieron, comodidad, armonía de colores, estación, temperatura y formalidad. Usa las preferencias personales como guía para esta situación. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.` },
+          { role: 'system', content: `Eres estilista personal y trabajas en la etapa "${stage}" de un outfit. Elige EXCLUSIVAMENTE IDs de candidates; no inventes ni repitas prendas. ${stageInstructions[stage]} Considera la situación, las prendas que ya se eligieron, comodidad, armonía de colores, estación, temperatura y formalidad. Prioriza la sensación térmica para decidir comodidad y capas; adapta calzado y prendas a lluvia, nieve o calor cuando el tiempo lo indique. Usa la ubicación solo para interpretar la estación y el contexto climático. Usa las preferencias personales como guía para esta situación. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.` },
           { role: 'user', content: JSON.stringify({
-            situation: { occasion: text(occasion, 80), mood: text(mood, 100), temperatureC: temperatureC !== null && temperatureC !== undefined && temperatureC !== '' && Number.isFinite(Number(temperatureC)) ? Number(temperatureC) : null, season: text(season, 30) },
+            situation: {
+              occasion: text(occasion, 80), mood: text(mood, 100),
+              temperatureC: temperatureC !== null && temperatureC !== undefined && temperatureC !== '' && Number.isFinite(Number(temperatureC)) ? Number(temperatureC) : null,
+              apparentTemperatureC: apparentTemperatureC !== null && apparentTemperatureC !== undefined && apparentTemperatureC !== '' && Number.isFinite(Number(apparentTemperatureC)) ? Number(apparentTemperatureC) : null,
+              season: text(season, 30), weather: text(weather, 60), location: text(location, 80), timezone: text(timezone, 80),
+            },
             alreadySelected: chosenContext, candidates, personalizedPreferences: preferences,
           }) },
         ],

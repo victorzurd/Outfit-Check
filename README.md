@@ -35,7 +35,7 @@ No pongas claves `service_role`/secret, el secreto JWT ni credenciales de Postgr
 
 Importa el repositorio y usa `npm run build` como comando de build y `dist` como directorio de salida. La configuración de Vite traduce las variables públicas de la integración de Supabase a la configuración que usa la app.
 
-La web no requiere servicios meteorológicos ni funciones de servidor adicionales fuera de Vercel.
+El tiempo local es opcional y no necesita secretos ni una función de servidor propia. Al pulsar **Tiempo local**, el navegador pide permiso de ubicación y consulta Open-Meteo; la ubicación precisa solo se usa para esa consulta, y las recomendaciones reciben la ciudad aproximada, la estación y las condiciones meteorológicas, sin coordenadas GPS. El permiso no se solicita automáticamente.
 
 ### IA para describir prendas y recomendar looks
 

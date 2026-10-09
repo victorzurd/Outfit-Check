@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
 import {
-  ArrowDownUp, ArrowRight, Check, Cloud, Compass, Download, Heart, LayoutGrid, LoaderCircle, LogIn,
+  ArrowDownUp, ArrowRight, Check, Cloud, CloudSun, Compass, Download, Heart, LayoutGrid, LoaderCircle, LogIn,
+  MapPin,
   LogOut, Menu, Plus, Search, Shirt, Sparkles, Star, Thermometer, Trash2, Upload, UserRound, X,
 } from 'lucide-react'
 import './styles.css'
@@ -67,6 +68,14 @@ const subtypeStyleProfiles = {
 }
 const defaultSubcategory = category => itemTypes[category]?.[0] || ''
 const occasions = ['Diario', 'Trabajo', 'Universidad', 'Cena', 'Brunch', 'Fiesta', 'Viaje']
+const seasonForLatitude = (latitude, localDate = new Date()) => {
+  const month = localDate instanceof Date ? localDate.getMonth() : Number(String(localDate).slice(5, 7)) - 1
+  const northSeason = month === 11 || month <= 1 ? 'Invierno' : month <= 4 ? 'Primavera' : month <= 7 ? 'Verano' : 'Otoño'
+  if (!(Number.isFinite(latitude) && latitude < 0)) return northSeason
+  return { Invierno: 'Verano', Verano: 'Invierno', Primavera: 'Otoño', Otoño: 'Primavera' }[northSeason]
+}
+const weatherDescription = code => code === 0 ? 'Despejado' : code <= 3 ? 'Nubes y claros' : code <= 48 ? 'Niebla' : code <= 67 ? 'Lluvia' : code <= 77 ? 'Nieve' : code <= 82 ? 'Chubascos' : code <= 99 ? 'Tormenta' : 'Tiempo actual'
+const cityFromTimezone = timezone => String(timezone || '').split('/').pop()?.replaceAll('_', ' ') || 'Ubicación actual'
 const localItemsKey = 'outfit-check-wardrobe-v2'
 const localLooksKey = 'outfit-check-saved-looks-v2'
 const localFeedbackBaseKey = 'outfit-check-outfit-feedback-v1'
@@ -325,8 +334,49 @@ function App() {
   const [occasion, setOccasion] = useState('Diario')
   const [mood, setMood] = useState('Cómoda')
   const [currentLook, setCurrentLook] = useState([])
+  const [currentWeather, setCurrentWeather] = useState(null)
+  const [weatherLoading, setWeatherLoading] = useState(false)
 
   const flash = message => { setNotice(message); window.setTimeout(() => setNotice(''), 3200) }
+
+  const enableLocalWeather = () => {
+    if (!navigator.geolocation) { flash('Este navegador no permite obtener la ubicación.'); return }
+    setWeatherLoading(true)
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+      try {
+        const params = new URLSearchParams({ latitude: String(coords.latitude), longitude: String(coords.longitude), current: 'temperature_2m,apparent_temperature,weather_code', timezone: 'auto' })
+        const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`)
+        if (!response.ok) throw new Error('No se pudo consultar el tiempo local.')
+        const result = await response.json()
+        const timezone = result.timezone || ''
+        setCurrentWeather({
+          temperatureC: Math.round(result.current.temperature_2m),
+          apparentTemperatureC: Math.round(result.current.apparent_temperature),
+          weatherCode: result.current.weather_code,
+          description: weatherDescription(result.current.weather_code),
+          timezone,
+          location: cityFromTimezone(timezone),
+          season: seasonForLatitude(coords.latitude, result.current.time),
+        })
+        flash(`Tiempo actualizado para ${cityFromTimezone(timezone)}.`)
+      } catch (error) { flash(error.message || 'No se pudo consultar el tiempo local.') }
+      finally { setWeatherLoading(false) }
+    }, error => {
+      setWeatherLoading(false)
+      flash(error.code === 1 ? 'Permite la ubicación en Safari para adaptar tus outfits al tiempo local.' : 'No se pudo obtener la ubicación. Inténtalo de nuevo.')
+    }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 900000 })
+  }
+
+  const outfitSituation = (context = {}) => ({
+    occasion: context.occasion ?? occasion,
+    mood: context.mood ?? mood,
+    temperatureC: context.temperatureC ?? currentWeather?.temperatureC ?? null,
+    apparentTemperatureC: context.apparentTemperatureC ?? currentWeather?.apparentTemperatureC ?? null,
+    season: context.season ?? currentWeather?.season ?? seasonForLatitude(null),
+    weather: context.weather ?? currentWeather?.description ?? '',
+    location: context.location ?? currentWeather?.location ?? '',
+    timezone: context.timezone ?? currentWeather?.timezone ?? '',
+  })
 
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview) }, [photoPreview])
 
@@ -491,10 +541,16 @@ function App() {
   }, [feedback, session?.user?.id])
 
   useEffect(() => {
-    if (page === 'inspiration' && feedCards.length) {
+    if (page === 'inspiration' && feedCards.length && window.matchMedia('(min-width: 561px)').matches) {
       feedContainerRef.current?.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [feedCards.length, page])
+
+  useEffect(() => {
+    if (page !== 'inspiration' || feedCards.length !== 1 || feedLoading || !window.matchMedia('(max-width: 560px)').matches) return undefined
+    const timer = window.setTimeout(() => loadInspirationCard(), 350)
+    return () => window.clearTimeout(timer)
+  }, [page, feedCards.length, feedLoading, items.length])
 
   const filteredItems = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase('es')
@@ -507,10 +563,39 @@ function App() {
         : new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
   }, [items, category, search, sort])
 
-  const chooseRandomItems = () => {
-    const pick = group => shuffle(items.filter(item => item.category === group))[0]
+  const chooseRandomItems = (context = {}) => {
+    const situation = outfitSituation(context)
+    const styleContext = getStyleContext(situation)
+    const scoreItem = item => {
+      const attrs = item.aiAttributes || {}
+      const seasons = (attrs.seasons || []).map(normalizeMatchText)
+      let score = seasons.includes(normalizeMatchText(situation.season)) ? 3 : 0
+      if (Number.isFinite(Number(situation.temperatureC)) && seasons.length) {
+        const expected = Number(situation.temperatureC) < 10 ? 'invierno' : Number(situation.temperatureC) > 25 ? 'verano' : ''
+        if (expected && seasons.includes(expected)) score += 2
+      }
+      const profile = subtypeStyleProfiles[item.category]?.[item.subcategory]
+      if (profile) score += styleDimensions.reduce((total, dimension) => total + (styleContext[dimension] || 0) * (profile[dimension] || 0), 0) * 2
+      if ([51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99].includes(currentWeather?.weatherCode)) {
+        if (['Botas', 'Botines'].includes(item.subcategory)) score += 1.5
+        if (['Sandalias', 'Chanclas'].includes(item.subcategory)) score -= 2
+      }
+      return score
+    }
+    const pick = group => {
+      const ranked = shuffle(items.filter(item => item.category === group).map(item => ({ item, score: scoreItem(item) })))
+        .sort((a, b) => b.score - a.score).slice(0, 5)
+      if (!ranked.length) return undefined
+      const weights = ranked.map(entry => Math.exp((entry.score - ranked[0].score) / 3))
+      let point = Math.random() * weights.reduce((sum, weight) => sum + weight, 0)
+      for (let index = 0; index < ranked.length; index += 1) {
+        point -= weights[index]
+        if (point <= 0) return ranked[index].item
+      }
+      return ranked.at(-1).item
+    }
     const selected = []
-    const fullBody = shuffle(items.filter(item => item.category === 'Cuerpo completo'))[0]
+    const fullBody = pick('Cuerpo completo')
     const hasTopAndBottom = items.some(item => item.category === 'Parte de arriba') && items.some(item => item.category === 'Parte de abajo')
     if (fullBody && (!hasTopAndBottom || Math.random() < 0.5)) selected.push(fullBody)
     else {
@@ -550,6 +635,7 @@ function App() {
   }))
 
   const recommendOutfitWithAI = async situation => {
+    situation = outfitSituation(situation)
     const inventory = items.map(compactAiItem)
     const feedback = feedbackForAI()
     const resolveIds = data => (Array.isArray(data.itemIds) ? data.itemIds : [])
@@ -558,7 +644,8 @@ function App() {
       const data = await callAiEndpoint('recommend-outfit', {
         stage: 'complete', inventory, selectedItems: [],
         occasion: situation.occasion, mood: situation.mood,
-        temperatureC: situation.temperatureC, season: situation.season, feedback,
+        temperatureC: situation.temperatureC, apparentTemperatureC: situation.apparentTemperatureC,
+        season: situation.season, weather: situation.weather, location: situation.location, timezone: situation.timezone, feedback,
       })
       return { items: resolveIds(data), reason: data.reason || '' }
     }
@@ -572,7 +659,8 @@ function App() {
       const data = await callAiEndpoint('recommend-outfit', {
         stage, inventory: candidates, selectedItems: selected.map(compactAiItem),
         occasion: situation.occasion, mood: situation.mood,
-        temperatureC: situation.temperatureC, season: situation.season,
+        temperatureC: situation.temperatureC, apparentTemperatureC: situation.apparentTemperatureC,
+        season: situation.season, weather: situation.weather, location: situation.location, timezone: situation.timezone,
         feedback,
       })
       const candidateIds = new Set(candidates.map(item => item.id))
@@ -599,7 +687,8 @@ function App() {
       generationLockRef.current = true
       setBusy(true)
       try {
-        const result = await recommendOutfitWithAI({ occasion, mood })
+        const situation = outfitSituation()
+        const result = await recommendOutfitWithAI(situation)
         if (!result.items.length) throw new Error('La IA no devolvió prendas válidas. Inténtalo otra vez.')
         setCurrentLook(result.items)
         return
@@ -612,7 +701,7 @@ function App() {
         setGenerateCooldown(25)
       }
     }
-    try { setCurrentLook(chooseRandomItems()) }
+    try { setCurrentLook(chooseRandomItems(outfitSituation())) }
     catch (error) { flash(error.message || 'No se pudo completar el outfit.') }
   }
 
@@ -624,11 +713,12 @@ function App() {
       const recent = new Set(feedCards.slice(-3).map(card => `${card.occasion}|${card.season}`))
       const moments = inspirationMoments.filter(moment => !recent.has(`${moment.occasion}|${moment.season}`))
       const moment = shuffle(moments.length ? moments : inspirationMoments)[0]
-      const selected = chooseRandomItems()
-      const reason = 'Combinación aleatoria de tu armario para este momento.'
+      const situation = outfitSituation(moment)
+      const selected = chooseRandomItems(situation)
+      const reason = currentWeather ? `Combinación adaptada al tiempo actual de ${currentWeather.location}.` : 'Combinación aleatoria de tu armario para este momento.'
       if (!selected?.length) throw new Error('No se encontró un outfit con prendas válidas.')
       setFeedCards(previous => [...previous, {
-        id: crypto.randomUUID(), ...moment, items: selected, reason, rating: null, createdAt: new Date().toISOString(),
+        id: crypto.randomUUID(), ...moment, ...situation, items: selected, reason, rating: null, createdAt: new Date().toISOString(),
       }])
     } catch (error) {
       flash(`No se pudo crear el outfit: ${error.message || 'inténtalo de nuevo.'}`)
@@ -893,13 +983,15 @@ function App() {
     </aside>
     {mobileMenu && <button className="mobile-overlay" aria-label="Cerrar menú" onClick={() => setMobileMenu(false)}/>}
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu-btn" onClick={() => setMobileMenu(true)} aria-label="Abrir menú"><Menu size={20}/></button><div className="crumb">Mi espacio <span>/</span> <b>{title}</b></div><div className="top-right"><span className={`sync-status ${cloudMode ? 'is-cloud' : ''}`}><Cloud size={15}/>{cloudMode ? 'Sincronizado' : 'Solo este dispositivo'}</span>{session ? <button className="top-login" onClick={() => setPage('profile')}>Mi cuenta</button> : <button className="top-login" onClick={() => { setLoginLinkSent(false); setEmail(''); setShowLogin(true) }}><LogIn size={15}/> Iniciar sesión</button>}<span className="top-avatar">{session?.user?.email?.[0]?.toUpperCase() || 'O'}</span></div></header>
+      <header className="topbar"><button className="mobile-menu-btn" onClick={() => setMobileMenu(true)} aria-label="Abrir menú"><Menu size={20}/></button><a className="mobile-brand" href="#armario" onClick={event => { event.preventDefault(); setPage('wardrobe') }}><span className="brand-mark">oc</span><span>outfit check</span></a><div className="crumb">Mi espacio <span>/</span> <b>{title}</b></div><div className="top-right"><button className={`weather-pill${currentWeather ? ' has-weather' : ''}`} onClick={enableLocalWeather} disabled={weatherLoading} aria-label="Usar ubicación y temperatura local"><CloudSun size={17}/><span>{weatherLoading ? 'Buscando…' : currentWeather ? `${currentWeather.location} · ${currentWeather.temperatureC}°` : 'Tiempo local'}</span></button><span className={`sync-status ${cloudMode ? 'is-cloud' : ''}`}><Cloud size={15}/>{cloudMode ? 'Sincronizado' : 'Solo este dispositivo'}</span>{session ? <button className="top-login" onClick={() => setPage('profile')}>Mi cuenta</button> : <button className="top-login" onClick={() => { setLoginLinkSent(false); setEmail(''); setShowLogin(true) }}><LogIn size={15}/> Iniciar sesión</button>}<span className="top-avatar">{session?.user?.email?.[0]?.toUpperCase() || 'O'}</span></div></header>
       <div className="page-content">
         {page === 'wardrobe' && <>
           <section className="welcome-row"><div><div className="eyebrow">TU ESPACIO, A TU MANERA</div><h1>Mi armario</h1><p>Organiza tus prendas y crea combinaciones con lo que ya tienes.</p></div><button className="primary-button" disabled={!dataReady || busy} onClick={() => { setEditingItem(null); setEditorCategory('Parte de arriba'); setEditorSubcategory(defaultSubcategory('Parte de arriba')); setShowEditor(true) }}><Plus size={17}/> Añadir prenda</button></section>
           <section className="look-section">
-            <div className="section-heading"><div><div className="eyebrow blush">COMBINACIONES</div><h2>¿Qué te apetece ponerte?</h2><p>Elige un plan y genera una combinación a partir de tus prendas.</p></div></div>
+            <div className="section-heading"><div><div className="eyebrow blush">EL EDITORIAL DE HOY</div><h2>¿Qué te apetece ponerte?</h2><p>Tu plan, tu mood y el tiempo de hoy inspiran el look.</p></div></div>
             <div className="builder-card"><div className="builder-controls">
+              <button className={`weather-banner${currentWeather ? ' is-ready' : ''}`} onClick={enableLocalWeather} disabled={weatherLoading}><span className="weather-icon"><MapPin size={18}/></span><span className="weather-copy"><b>{weatherLoading ? 'Buscando el tiempo local…' : currentWeather ? `${currentWeather.location} · ${currentWeather.temperatureC}°` : 'Vestirse con el tiempo de hoy'}</b><small>{currentWeather ? `${currentWeather.description} · sensación ${currentWeather.apparentTemperatureC}° · ${currentWeather.season}` : 'Activa la ubicación para adaptar el look a tu ciudad'}</small></span><ArrowRight size={16}/></button>
+              <p className="weather-privacy">La ubicación precisa solo se usa al activarlo. Open-Meteo recibe las coordenadas; la IA recibe la ciudad aproximada y el tiempo local, no tu GPS.</p>
               <label className="field-label" htmlFor="occasion">Plan</label><select id="occasion" className="builder-select" value={occasion} onChange={event => setOccasion(event.target.value)}>{occasions.map(value => <option key={value}>{value}</option>)}</select>
               <label className="field-label" htmlFor="mood">Cómo quieres sentirte</label><input id="mood" className="builder-input" value={mood} onChange={event => setMood(event.target.value)} maxLength={60} placeholder="Cómoda, elegante, informal…"/>
               <button className="generate-button" disabled={!dataReady || !items.length || busy || (cloudMode && !!session?.user && generateCooldown > 0)} onClick={generateLook}><Sparkles size={17}/>{busy ? 'Pensando el outfit…' : cloudMode && session?.user && generateCooldown > 0 ? `Disponible en ${generateCooldown}s` : currentLook.length ? 'Probar otra combinación' : cloudMode ? 'Crear outfit con IA' : 'Crear una combinación'}</button>
@@ -913,14 +1005,15 @@ function App() {
           </section>
         </>}
 
-        {page === 'inspiration' && <section className="content-panel inspiration-page"><div className="inspiration-heading"><div><div className="eyebrow blush">TU PRÓXIMA IDEA</div><h1>Inspiración</h1><p>Descubre outfits para momentos distintos y puntúa los que más van contigo.</p></div><div className="inspiration-heading-actions"><span>{feedback.length} valoraciones</span><button className="primary-button" onClick={loadInspirationCard} disabled={feedLoading || !items.length}><Sparkles size={16}/>{feedLoading ? 'Creando…' : 'Siguiente outfit'}</button></div></div>{!items.length ? <div className="empty-state"><Shirt size={26}/><b>Primero llena tu armario</b><span>Añade algunas prendas para descubrir combinaciones para la universidad, una cena, un viaje y más.</span><button className="outline-button" onClick={() => setPage('wardrobe')}><LayoutGrid size={16}/> Ir a mi armario</button></div> : <div className="inspiration-feed" ref={feedContainerRef}>{feedCards.map((card, cardIndex) => <article className="inspiration-card" key={card.id}><div className="inspiration-card-media"><div className="inspiration-photo-grid">{card.items.map(item => <div className="inspiration-photo" key={`${card.id}-${item.id}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={36}/>}<span>{item.name}</span></div>)}</div><div className="inspiration-vignette"/><div className="inspiration-card-count">{String(cardIndex + 1).padStart(2, '0')} · LOOK</div><div className="inspiration-rating" aria-label="Puntúa este outfit">{[5, 4, 3, 2, 1].map(score => <button key={score} className={card.rating >= score ? 'rated' : ''} title={`${score} de 5`} aria-label={`Puntuar con ${score} de 5`} onClick={() => rateInspirationCard(card, score)}><Star size={20} fill={card.rating >= score ? 'currentColor' : 'none'}/><small>{score}</small></button>)}</div></div><div className="inspiration-card-copy"><div className="inspiration-context"><span>{card.occasion}</span><span><Thermometer size={14}/>{card.temperatureC}°C</span><span>{card.season}</span></div><div className="eyebrow blush">{card.moment}</div><h2>{card.mood}</h2><p className="inspiration-reason">{card.reason || 'Una propuesta creada a partir de las prendas de tu armario.'}</p><div className="inspiration-item-list">{card.items.map(item => <span key={`${card.id}-tag-${item.id}`}>{item.subcategory || item.category} · {item.name}</span>)}</div><div className="inspiration-card-footer">{card.rating ? <span>Tu puntuación: <b>{card.rating}/5</b> · Se tendrá en cuenta para situaciones parecidas.</span> : <span>¿Te lo pondrías? Tu valoración ayudará a personalizar futuras ideas.</span>}<div className="inspiration-card-actions"><button className={`text-action${card.saved ? ' saved' : ''}`} onClick={() => saveInspirationLook(card)} disabled={card.saved || savingFeedCardId === card.id}>{savingFeedCardId === card.id ? 'Guardando…' : card.saved ? 'Guardado' : 'Favorito'}<Heart size={15} fill={card.saved ? 'currentColor' : 'none'}/></button><button className="text-action" onClick={loadInspirationCard} disabled={feedLoading}>{feedLoading ? 'Preparando…' : 'Siguiente'}<ArrowRight size={15}/></button></div></div></div></article>)}{!feedCards.length && feedLoading && <div className="empty-state">Preparando tu primer outfit…</div>}</div>}</section>}
+        {page === 'inspiration' && <section className="content-panel inspiration-page"><div className="inspiration-heading"><div><div className="eyebrow blush">TU PRÓXIMA IDEA</div><h1>Inspiración</h1><p>Desliza para descubrir outfits pensados para el tiempo de hoy.</p></div><div className="inspiration-heading-actions"><span>{feedback.length} valoraciones</span><button className="primary-button" onClick={loadInspirationCard} disabled={feedLoading || !items.length}><Sparkles size={16}/>{feedLoading ? 'Creando…' : 'Siguiente outfit'}</button></div></div>{!items.length ? <div className="empty-state"><Shirt size={26}/><b>Primero llena tu armario</b><span>Añade algunas prendas para descubrir combinaciones para la universidad, una cena, un viaje y más.</span><button className="outline-button" onClick={() => setPage('wardrobe')}><LayoutGrid size={16}/> Ir a mi armario</button></div> : <div className="inspiration-feed" ref={feedContainerRef} onScroll={event => { const node = event.currentTarget; if (window.matchMedia('(max-width: 560px)').matches && feedCards.length && !feedLoading && node.scrollHeight - node.scrollTop - node.clientHeight < node.clientHeight * 0.55) loadInspirationCard() }}>{feedCards.map((card, cardIndex) => <article className="inspiration-card" key={card.id}><div className="inspiration-card-media"><div className="inspiration-photo-grid">{card.items.map(item => <div className="inspiration-photo" key={`${card.id}-${item.id}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={36}/>}<span>{item.name}</span></div>)}</div><div className="inspiration-vignette"/><div className="inspiration-card-count">{String(cardIndex + 1).padStart(2, '0')} · LOOK</div><div className="inspiration-rating" aria-label="Puntúa este outfit">{[5, 4, 3, 2, 1].map(score => <button key={score} className={card.rating >= score ? 'rated' : ''} title={`${score} de 5`} aria-label={`Puntuar con ${score} de 5`} onClick={() => rateInspirationCard(card, score)}><Star size={20} fill={card.rating >= score ? 'currentColor' : 'none'}/><small>{score}</small></button>)}</div></div><div className="inspiration-card-copy"><div className="inspiration-context"><span>{card.occasion}</span><span><Thermometer size={14}/>{card.temperatureC}°C</span><span>{card.season}</span>{card.location && <span><MapPin size={14}/>{card.location}</span>}</div><div className="eyebrow blush">{card.moment}</div><h2>{card.mood}</h2><p className="inspiration-reason">{card.reason || 'Una propuesta creada a partir de las prendas de tu armario.'}</p><div className="inspiration-item-list">{card.items.map(item => <span key={`${card.id}-tag-${item.id}`}>{item.subcategory || item.category} · {item.name}</span>)}</div><div className="inspiration-card-footer">{card.rating ? <span>Tu puntuación: <b>{card.rating}/5</b> · Se tendrá en cuenta para situaciones parecidas.</span> : <span>¿Te lo pondrías? Tu valoración ayudará a personalizar futuras ideas.</span>}<div className="inspiration-card-actions"><button className={`text-action${card.saved ? ' saved' : ''}`} onClick={() => saveInspirationLook(card)} disabled={card.saved || savingFeedCardId === card.id}>{savingFeedCardId === card.id ? 'Guardando…' : card.saved ? 'Guardado' : 'Favorito'}<Heart size={15} fill={card.saved ? 'currentColor' : 'none'}/></button><button className="text-action" onClick={loadInspirationCard} disabled={feedLoading}>{feedLoading ? 'Preparando…' : 'Siguiente'}<ArrowRight size={15}/></button></div></div></div></article>)}{feedLoading && <div className="feed-loading-indicator"><LoaderCircle size={18} className="spinning"/>Preparando tu siguiente look…</div>}</div>}</section>}
 
         {page === 'looks' && <section className="content-panel"><div className="welcome-row"><div><div className="eyebrow blush">COMBINACIONES GUARDADAS</div><h1>Mis looks</h1><p>Guarda ideas para volver a ellas cuando las necesites.</p></div><button className="primary-button" onClick={() => { setPage('wardrobe'); if (!currentLook.length) generateLook() }}><Sparkles size={16}/> Crear un look</button></div>{looks.length ? <div className="saved-look-grid">{looks.map(look => <article className="saved-look-card" key={look.id}><div className="saved-look-images">{look.items.map((item, index) => <div className="saved-look-image" key={`${look.id}-${item.id}-${index}`}>{item.image ? <img src={item.image} alt={item.name}/> : <Shirt size={26}/>}<span>{item.name}</span></div>)}</div><div className="saved-look-copy"><div><span className="eyebrow blush">{look.occasion || 'LOOK GUARDADO'}</span><h2>{look.name}</h2><p>{look.mood || ''}{look.createdAt ? ` · ${new Date(look.createdAt).toLocaleDateString('es-ES')}` : ''}</p></div><button className="item-delete" aria-label={`Eliminar ${look.name}`} onClick={() => removeLook(look)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><Heart size={25}/><b>Aún no has guardado ningún look</b><span>Crea una combinación en “Mi armario” y guárdala para verla aquí.</span><button className="outline-button" onClick={() => { setPage('wardrobe'); generateLook() }}><Sparkles size={16}/> Crear combinación</button></div>}</section>}
 
         {page === 'profile' && <section className="content-panel profile-page"><div className="eyebrow blush">TU CUENTA</div><h1>Mi perfil</h1><p className="profile-intro">Gestiona tu sesión y cómo se guardan tus datos.</p><article className="profile-card"><div className="profile-card-icon"><UserRound size={22}/></div><div className="profile-card-main"><span className="eyebrow">CUENTA</span><h2>{session?.user?.email || 'Sin sesión iniciada'}</h2><p>{cloudMode ? 'Tus prendas y looks se sincronizan con Supabase.' : session?.user?.id === '__local_test__' ? 'Acceso de prueba local. Los datos solo se guardan en este navegador.' : session ? 'Sesión abierta; la sincronización no está disponible ahora.' : supabase ? 'Inicia sesión para guardar y sincronizar tus datos en la nube.' : 'Tus datos se guardan solo en este navegador.'}</p></div>{session ? <button className="outline-button" onClick={async () => { if (session.user.id === '__local_test__') { setSession(null); flash('Sesión de prueba cerrada.'); return }; const { error } = await supabase.auth.signOut(); if (error) flash(error.message); else flash('Sesión cerrada.') }}><LogOut size={16}/> Cerrar sesión</button> : supabase && <button className="outline-button" onClick={() => setShowLogin(true)}><LogIn size={16}/> Conectar cuenta</button>}</article><article className="profile-card"><div className="profile-card-icon"><Download size={22}/></div><div className="profile-card-main"><span className="eyebrow">APLICACIÓN</span><h2>Instala Outfit Check</h2><p>En ordenador usa Instalar en el menú de Chrome o Edge. En iPhone o iPad, abre esta página en Safari, toca Compartir y selecciona Añadir a pantalla de inicio.</p></div><button className="outline-button" onClick={installApp}><Download size={16}/> Instalar aplicación</button></article><article className="profile-card"><div className="profile-card-icon"><Cloud size={22}/></div><div className="profile-card-main"><span className="eyebrow">ALMACENAMIENTO</span><h2>{cloudMode ? 'Armario sincronizado' : 'Guardado local'}</h2><p>{cloudMode ? 'Tu bucket de fotos es privado y la app usa enlaces temporales para mostrarlas.' : 'Las prendas y los looks permanecen en este dispositivo hasta que borres sus datos del navegador.'}</p></div>{session && !cloudMode && <button className="outline-button" onClick={() => { setAuthReady(false); window.setTimeout(() => setAuthReady(true), 0) }}>Reintentar conexión</button>}</article><article className="profile-card"><div className="profile-card-icon"><Download size={22}/></div><div className="profile-card-main"><span className="eyebrow">TUS DATOS</span><h2>Descargar una copia</h2><p>Exporta tus prendas y looks guardados como un archivo JSON.</p></div><button className="outline-button" onClick={exportWardrobe}><Download size={16}/> Descargar copia</button></article><div className="privacy-note"><b>Sobre tus imágenes</b><p>Al guardar una foto con tu cuenta, se envía a Gemini para describir la prenda. Groq recibe solo las descripciones de texto al crear un outfit.</p></div></section>}
-        <footer><span>outfit check <span className="footer-heart">♥</span> tu armario, tus reglas</span><span>{cloudMode ? 'Sincronizado con tu cuenta' : 'Guardado en este dispositivo'}</span></footer>
+        <footer className={page === 'inspiration' ? 'app-footer is-feed' : 'app-footer'}><span>outfit check <span className="footer-heart">♥</span> tu armario, tus reglas</span><span>{cloudMode ? 'Sincronizado con tu cuenta' : 'Guardado en este dispositivo'}</span></footer>
       </div>
     </main>
+    <nav className="mobile-tabbar" aria-label="Navegación principal">{navItems.map(({ id, label, icon: Icon }) => <button key={`mobile-${id}`} className={page === id ? 'active' : ''} onClick={() => { setPage(id); if (id === 'inspiration' && !feedCards.length) loadInspirationCard() }}><Icon size={20}/><span>{id === 'wardrobe' ? 'Armario' : id === 'inspiration' ? 'Ideas' : id === 'looks' ? 'Guardados' : 'Perfil'}</span>{id === 'looks' && looks.length > 0 && <i>{looks.length}</i>}</button>)}</nav>
     {notice && <div className="toast"><Check size={17}/>{notice}</div>}
     {showAuthCallback && <div className="modal-backdrop auth-callback-backdrop"><section className="auth-callback" aria-live="polite">
       <div className={`auth-callback-icon ${authCallbackStatus}`}>
