@@ -1,6 +1,26 @@
 import { requireUser, sendJson, parseModelJson } from '../server/ai-utils.js'
 
 const text = (value, max = 500) => String(value || '').slice(0, max)
+const colorFamilyAliases = {
+  neutro: ['negro', 'black', 'blanco', 'white', 'gris', 'gray', 'grey', 'beige', 'crema', 'ivory', 'marfil', 'crudo', 'ecru', 'arena', 'taupe', 'topo', 'camel', 'marron', 'brown', 'chocolate', 'nude', 'natural', 'tan'],
+  azul: ['azul', 'blue', 'celeste', 'marino', 'navy', 'denim', 'vaquero', 'añil', 'indigo'],
+  verde: ['verde', 'green', 'oliva', 'olive', 'caqui', 'khaki', 'esmeralda', 'emerald', 'menta', 'mint', 'pistacho', 'salvia', 'sage'],
+  rojo: ['rojo', 'red', 'burdeos', 'burgundy', 'vino', 'wine', 'granate', 'maroon', 'borgona', 'cereza', 'teja'],
+  rosa: ['rosa', 'pink', 'fucsia', 'magenta', 'malva', 'blush'],
+  amarillo: ['amarillo', 'yellow', 'mostaza', 'mustard', 'dorado', 'oro', 'gold'],
+  naranja: ['naranja', 'orange', 'terracota', 'terracotta', 'cobre', 'coral', 'rust'],
+  morado: ['morado', 'purple', 'lila', 'lilac', 'lavanda', 'lavender', 'violeta', 'plum', 'purpura'],
+  metalizado: ['plata', 'silver', 'plateado', 'plateada', 'metalizado', 'metalizada'],
+}
+const normalize = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
+const colorFamilies = item => {
+  const color = normalize(item?.color || item?.attributes?.color || '')
+  if (!color) return []
+  return Object.entries(colorFamilyAliases)
+    .filter(([, aliases]) => aliases.some(alias => color.split(/[^a-z]+/).includes(normalize(alias))))
+    .map(([family]) => family)
+}
+const colorPair = (first, second) => [first, second].sort().join(' + ')
 
 const preferenceContext = (feedback, situation = {}) => {
   const groups = new Map()
@@ -22,11 +42,28 @@ const preferenceContext = (feedback, situation = {}) => {
     const group = groups.get(key)
     group.count += 1
     group.scoreTotal += rating
-    for (const item of Array.isArray(entry.outfit) ? entry.outfit.slice(0, 6) : []) {
+    const outfit = Array.isArray(entry.outfit) ? entry.outfit.slice(0, 8) : []
+    const itemColorFamilies = outfit.map(colorFamilies)
+    const outfitPairs = new Set()
+    for (let first = 0; first < itemColorFamilies.length; first += 1) {
+      for (let second = first + 1; second < itemColorFamilies.length; second += 1) {
+        for (const firstFamily of itemColorFamilies[first]) for (const secondFamily of itemColorFamilies[second]) {
+          outfitPairs.add(colorPair(firstFamily, secondFamily))
+        }
+      }
+    }
+    for (const pair of outfitPairs) {
+      const feature = `color-pair:${pair}`
+      if (!group.features.has(feature)) group.features.set(feature, { liked: 0, disliked: 0 })
+      const tally = group.features.get(feature)
+      if (rating >= 4) tally.liked += 1
+      if (rating <= 2) tally.disliked += 1
+    }
+    for (const item of outfit) {
       const attributes = item?.attributes && typeof item.attributes === 'object' ? item.attributes : item
       const features = [
         item?.category && item?.subcategory ? `${text(item.category, 30)}: ${text(item.subcategory, 40)}` : '',
-        item?.color ? `color ${text(item.color, 40)}` : '',
+        ...colorFamilies(item).map(family => `color ${family}`),
         attributes?.style ? `estilo ${text(attributes.style, 50)}` : '',
         attributes?.pattern ? `estampado ${text(attributes.pattern, 40)}` : '',
         attributes?.formality ? `formalidad ${text(attributes.formality, 30)}` : '',
@@ -45,8 +82,10 @@ const preferenceContext = (feedback, situation = {}) => {
     return {
       occasion: group.occasion, season: group.season, temperatureBand: group.temperatureBand, mood: group.mood,
       ratingsCount: group.count, averageRating: Number((group.scoreTotal / group.count).toFixed(2)),
-      likedFeatures: features.filter(entry => entry.liked).sort((a, b) => b.liked - a.liked).slice(0, 4).map(entry => entry.feature),
-      dislikedFeatures: features.filter(entry => entry.disliked).sort((a, b) => b.disliked - a.disliked).slice(0, 4).map(entry => entry.feature),
+      likedFeatures: features.filter(entry => entry.liked > entry.disliked && !entry.feature.startsWith('color-pair:')).sort((a, b) => (b.liked - b.disliked) - (a.liked - a.disliked)).slice(0, 4).map(entry => entry.feature),
+      dislikedFeatures: features.filter(entry => entry.disliked > entry.liked && !entry.feature.startsWith('color-pair:')).sort((a, b) => (b.disliked - b.liked) - (a.disliked - a.liked)).slice(0, 4).map(entry => entry.feature),
+      likedColorPairs: features.filter(entry => entry.feature.startsWith('color-pair:') && entry.liked > entry.disliked).sort((a, b) => (b.liked - b.disliked) - (a.liked - a.disliked)).slice(0, 4).map(entry => entry.feature.slice('color-pair:'.length)),
+      dislikedColorPairs: features.filter(entry => entry.feature.startsWith('color-pair:') && entry.disliked > entry.liked).sort((a, b) => (b.disliked - b.liked) - (a.disliked - a.liked)).slice(0, 4).map(entry => entry.feature.slice('color-pair:'.length)),
     }
   })
   const overallFeatures = new Map()
@@ -62,11 +101,14 @@ const preferenceContext = (feedback, situation = {}) => {
     + (profile.season === (text(situation.season, 30) || 'sin estación') ? 4 : 0)
     + (profile.temperatureBand === targetBand && targetBand ? 2 : 0)
   const sortedFeatures = [...overallFeatures.entries()].map(([feature, tally]) => ({ feature, ...tally }))
+  const sortedColorPairs = sortedFeatures.filter(entry => entry.feature.startsWith('color-pair:'))
   return {
     ratingsCount: totalRatings,
     averageRating: totalRatings ? Number((ratingTotal / totalRatings).toFixed(2)) : null,
-    overallLikedFeatures: sortedFeatures.filter(entry => entry.liked).sort((a, b) => b.liked - a.liked).slice(0, 6).map(entry => entry.feature),
-    overallDislikedFeatures: sortedFeatures.filter(entry => entry.disliked).sort((a, b) => b.disliked - a.disliked).slice(0, 6).map(entry => entry.feature),
+    overallLikedFeatures: sortedFeatures.filter(entry => entry.liked > entry.disliked && !entry.feature.startsWith('color-pair:')).sort((a, b) => (b.liked - b.disliked) - (a.liked - a.disliked)).slice(0, 6).map(entry => entry.feature),
+    overallDislikedFeatures: sortedFeatures.filter(entry => entry.disliked > entry.liked && !entry.feature.startsWith('color-pair:')).sort((a, b) => (b.disliked - b.liked) - (a.disliked - a.liked)).slice(0, 6).map(entry => entry.feature),
+    likedColorPairs: sortedColorPairs.filter(entry => entry.liked > entry.disliked).sort((a, b) => (b.liked - b.disliked) - (a.liked - a.disliked)).slice(0, 6).map(entry => entry.feature.slice('color-pair:'.length)),
+    dislikedColorPairs: sortedColorPairs.filter(entry => entry.disliked > entry.liked).sort((a, b) => (b.disliked - b.liked) - (a.disliked - a.liked)).slice(0, 6).map(entry => entry.feature.slice('color-pair:'.length)),
     similarSituations: profiles.sort((a, b) => relevance(b) - relevance(a) || b.ratingsCount - a.ratingsCount).slice(0, 3),
   }
 }
@@ -83,10 +125,10 @@ export default async function handler(req, res) {
     activeStage = stage || activeStage
     const stageInstructions = {
       complete: 'Elige el outfit completo usando la lista entera. Debe incluir exactamente un Calzado y una prenda de Cuerpo completo O una Parte de arriba más una Parte de abajo. Puede llevar cero o un Bolso. Puede incluir varios Accesorios; máximo uno de Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos pueden repetirse. No combines Cuerpo completo con partes de arriba o abajo. Puedes añadir una capa de Parte de arriba al conjunto separado.',
-      base: 'Elige exactamente UNA sola opción para iniciar el outfit: una Parte de arriba o una prenda de Cuerpo completo. Si eliges Cuerpo completo, no se añadirán partes de arriba ni de abajo.',
-      bottom: 'Elige exactamente una Parte de abajo que combine con la parte de arriba ya elegida. No repitas ni sustituyas las prendas ya seleccionadas.',
-      footwear: 'Elige exactamente un Calzado que combine con todas las prendas ya seleccionadas.',
-      extras: 'Elige cero o un Bolso y los Accesorios que mejor completen el outfit. Como máximo uno de cada tipo que se lleve de uno en uno: Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos sí pueden repetirse. Devuelve solo artículos de la lista candidata; la lista puede quedar vacía.',
+      base: 'Elige exactamente UNA sola opción para iniciar el outfit: una Parte de arriba o una prenda de Cuerpo completo. Si eliges Cuerpo completo, no se añadirán partes de arriba ni de abajo. Prioriza una base que permita crear una paleta equilibrada con las prendas candidatas disponibles; no elijas un color solo porque coincida con muchas otras prendas.',
+      bottom: 'Elige exactamente una Parte de abajo que combine con la parte de arriba ya elegida. Compara sus familias de color; evita repetir el mismo color dominante si hay una alternativa armónica. No repitas ni sustituyas las prendas ya seleccionadas.',
+      footwear: 'Elige exactamente un Calzado que combine con todas las prendas ya seleccionadas. Úsalo para equilibrar la paleta con un neutro o repetir discretamente un color de acento; evita que todo el outfit quede en una sola familia de color.',
+      extras: 'Elige cero o un Bolso y los Accesorios que mejor completen el outfit. Prefiere un neutro o un accesorio que repita un único acento ya presente; no añadas un color nuevo sin motivo. Como máximo uno de cada tipo que se lleve de uno en uno: Pendientes (un par), Collares, Relojes, Cinturones, Sombreros, Bufandas, Gafas y Otros. Pulseras y Anillos sí pueden repetirse. Devuelve solo artículos de la lista candidata; la lista puede quedar vacía.',
     }
     if (!Object.hasOwn(stageInstructions, stage)) return sendJson(res, 400, { error: 'Falta una etapa válida para crear el outfit.' })
     if (!Array.isArray(inventory) || inventory.length === 0) {
@@ -122,7 +164,7 @@ export default async function handler(req, res) {
     const apiKey = process.env.GROQ_API_KEY
     if (!apiKey) return sendJson(res, 500, { error: 'Añade GROQ_API_KEY a las variables de entorno de Vercel.' })
     const model = process.env.GROQ_MODEL || 'openai/gpt-oss-20b'
-    const feedback = Array.isArray(req.body.feedback) ? req.body.feedback : []
+    const feedback = Array.isArray(req.body.feedback) ? req.body.feedback.slice(0, 100) : []
     const preferences = preferenceContext(feedback, { occasion, season, temperatureC })
     const upstream = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -130,7 +172,13 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model, temperature: 0.35, reasoning_effort: 'low', max_completion_tokens: 400,
         messages: [
-          { role: 'system', content: `Eres estilista personal y trabajas en la etapa "${stage}" de un outfit. Elige EXCLUSIVAMENTE IDs de candidates; no inventes ni repitas prendas. ${stageInstructions[stage]} Considera la situación, las prendas que ya se eligieron, comodidad, armonía de colores, estación, temperatura y formalidad. Prioriza la sensación térmica para decidir comodidad y capas; adapta calzado y prendas a lluvia, nieve o calor cuando el tiempo lo indique. Usa la ubicación solo para interpretar la estación y el contexto climático. Usa las preferencias personales como guía para esta situación. Si faltan descripciones, decide con nombre, categoría y color. Responde únicamente con JSON.` },
+          { role: 'system', content: `Eres estilista personal y trabajas en la etapa "${stage}" de un outfit. Elige EXCLUSIVAMENTE IDs de candidates; no inventes ni repitas prendas. ${stageInstructions[stage]}
+
+PALETA DE COLOR (prioridad alta): planifica el conjunto completo, no cada prenda de forma aislada. Busca normalmente 2 o 3 familias de color distintas: una base y uno o dos acentos. Puedes repetir negro, blanco, beige, gris, camel y otros neutros para dar cohesión, pero evita que todas las prendas repitan el mismo color dominante cuando haya opciones que contrasten bien. Combina tonos con criterio (neutro + color, tonos cercanos o un acento complementario); no fuerces colores que no estén en los datos. Si ya hay prendas elegidas, armoniza con ellas sin alterar sus colores. El calzado, el bolso y los accesorios pueden repetir discretamente un acento. No propongas un look monocromático salvo que las valoraciones indiquen que a la persona le gusta y los tonos tengan variación suficiente.
+
+PERSONALIZACIÓN DEL COLOR: usa personalizedPreferences.likedColorPairs y los pares positivos de similarSituations como evidencia de combinaciones que la persona ha puntuado con 4 o 5. Evita los pares en dislikedColorPairs y los pares negativos de situaciones similares (puntuaciones 1 o 2). Da más peso a la misma ocasión, estación y franja térmica. Una puntuación 3 es neutral; con pocos datos, aplica las reglas generales de paleta y no inventes preferencias.
+
+Considera también situación, comodidad, estación, temperatura y formalidad. Prioriza la sensación térmica para decidir comodidad y capas; adapta calzado y prendas a lluvia, nieve o calor cuando el tiempo lo indique. Usa la ubicación solo para interpretar la estación y el contexto climático. Si faltan descripciones o colores, decide con el nombre y la categoría y no deduzcas un color ausente. Devuelve una razón breve que mencione el equilibrio del look sin afirmar colores que no aparezcan. Responde únicamente con JSON.` },
           { role: 'user', content: JSON.stringify({
             situation: {
               occasion: text(occasion, 80), mood: text(mood, 100),

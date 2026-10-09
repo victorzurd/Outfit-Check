@@ -224,9 +224,83 @@ const getStyleContext = situation => {
   }
   return profile
 }
+const colorFamilyAliases = {
+  neutro: ['negro', 'black', 'blanco', 'white', 'gris', 'gray', 'grey', 'beige', 'crema', 'ivory', 'marfil', 'crudo', 'ecru', 'arena', 'taupe', 'topo', 'camel', 'marron', 'brown', 'chocolate', 'nude', 'natural', 'tan'],
+  azul: ['azul', 'blue', 'celeste', 'marino', 'navy', 'denim', 'vaquero', 'añil', 'indigo'],
+  verde: ['verde', 'green', 'oliva', 'olive', 'caqui', 'khaki', 'esmeralda', 'emerald', 'menta', 'mint', 'pistacho', 'salvia', 'sage'],
+  rojo: ['rojo', 'red', 'burdeos', 'burgundy', 'vino', 'wine', 'granate', 'maroon', 'borgona', 'cereza', 'teja'],
+  rosa: ['rosa', 'pink', 'fucsia', 'magenta', 'malva', 'blush'],
+  amarillo: ['amarillo', 'yellow', 'mostaza', 'mustard', 'dorado', 'oro', 'gold'],
+  naranja: ['naranja', 'orange', 'terracota', 'terracotta', 'cobre', 'coral', 'rust'],
+  morado: ['morado', 'purple', 'lila', 'lilac', 'lavanda', 'lavender', 'violeta', 'plum', 'purpura'],
+  metalizado: ['plata', 'silver', 'plateado', 'plateada', 'metalizado', 'metalizada'],
+}
+const neutralColorFamilies = new Set(['neutro', 'metalizado'])
+const colorFamiliesFor = item => {
+  const attributes = item?.aiAttributes || item?.attributes || {}
+  const color = normalizeMatchText(item?.color || attributes.color || '')
+  if (!color) return []
+  return Object.entries(colorFamilyAliases)
+    .filter(([, aliases]) => aliases.some(alias => color.split(/[^a-z]+/).includes(normalizeMatchText(alias))))
+    .map(([family]) => family)
+}
+const colorToneFor = item => normalizeMatchText(item?.color || item?.aiAttributes?.color || item?.attributes?.color || '').trim()
+const colorPairKey = (first, second) => [first, second].sort().join('|')
+const temperatureBandFor = temperature => {
+  if (temperature === null || temperature === undefined || temperature === '') return ''
+  const value = Number(temperature)
+  if (!Number.isFinite(value)) return ''
+  return value < 10 ? 'frio' : value < 20 ? 'templado' : value < 28 ? 'calido' : 'caluroso'
+}
+const buildRatedColorPreferences = (feedback, situation) => {
+  const familyTallies = new Map()
+  const pairTallies = new Map()
+  const add = (map, key, value, weight) => {
+    const tally = map.get(key) || { total: 0, weight: 0 }
+    tally.total += value * weight
+    tally.weight += weight
+    map.set(key, tally)
+  }
+  const targetBand = temperatureBandFor(situation.temperatureC)
+  for (const [index, entry] of (Array.isArray(feedback) ? feedback : []).slice(0, 100).entries()) {
+    const rating = Number(entry.rating)
+    if (!Number.isFinite(rating) || rating === 3 || rating < 1 || rating > 5) continue
+    const outfits = (entry.outfit || entry.outfit_snapshot || entry.outfitSnapshot || []).slice(0, 8)
+    const itemFamilies = outfits.map(colorFamiliesFor)
+    const families = [...new Set(itemFamilies.flat())]
+    if (!families.length) continue
+    const entryTemperature = entry.temperatureC ?? entry.temperature_c
+    const weight = (1 + (entry.occasion === situation.occasion ? 0.75 : 0)
+      + (entry.season && entry.season === situation.season ? 0.35 : 0)
+      + (targetBand && temperatureBandFor(entryTemperature) === targetBand ? 0.25 : 0))
+      * Math.max(0.45, 1 - index * 0.02)
+    for (const family of families) add(familyTallies, family, rating - 3, weight)
+    const outfitPairs = new Set()
+    for (let first = 0; first < itemFamilies.length; first += 1) {
+      for (let second = first + 1; second < itemFamilies.length; second += 1) {
+        for (const firstFamily of itemFamilies[first]) for (const secondFamily of itemFamilies[second]) {
+          outfitPairs.add(colorPairKey(firstFamily, secondFamily))
+        }
+      }
+    }
+    for (const pair of outfitPairs) add(pairTallies, pair, rating - 3, weight)
+  }
+  const values = tallies => new Map([...tallies.entries()].map(([key, tally]) => [key, tally.total / tally.weight]))
+  return { families: values(familyTallies), pairs: values(pairTallies) }
+}
+const paletteHarmonyScore = (first, second, firstTone = '', secondTone = '') => {
+  if (first === second) {
+    if (!neutralColorFamilies.has(first)) return -1.6
+    return firstTone && firstTone === secondTone ? -0.65 : 0.25
+  }
+  if (neutralColorFamilies.has(first) && neutralColorFamilies.has(second)) return 0.25
+  if (neutralColorFamilies.has(first) || neutralColorFamilies.has(second)) return 0.8
+  return 0.45
+}
 const shortlistAiCandidates = (candidates, stage, situation, selected, feedback) => {
   const limits = { base: 12, bottom: 9, footwear: 9, extras: 12 }
   const styleContext = getStyleContext(situation)
+  const colorPreferences = buildRatedColorPreferences(feedback, situation)
   const preferenceScores = new Map()
   for (const entry of feedback) {
     const rating = Number(entry.rating)
@@ -237,7 +311,6 @@ const shortlistAiCandidates = (candidates, stage, situation, selected, feedback)
       const attrs = item.attributes || item
       const features = [
         item.category && item.subcategory ? `type:${normalizeMatchText(item.category)}:${normalizeMatchText(item.subcategory)}` : '',
-        item.color ? `color:${normalizeMatchText(item.color)}` : '',
         attrs.style ? `style:${normalizeMatchText(attrs.style)}` : '',
         attrs.pattern ? `pattern:${normalizeMatchText(attrs.pattern)}` : '',
         attrs.formality ? `formality:${normalizeMatchText(attrs.formality)}` : '',
@@ -263,14 +336,20 @@ const shortlistAiCandidates = (candidates, stage, situation, selected, feedback)
     score += contextWords.filter(word => styleText.includes(word)).length * 1.5
     const itemFeatures = [
       item.category && item.subcategory ? `type:${normalizeMatchText(item.category)}:${normalizeMatchText(item.subcategory)}` : '',
-      item.color ? `color:${normalizeMatchText(item.color)}` : '',
       attrs.style ? `style:${normalizeMatchText(attrs.style)}` : '',
       attrs.pattern ? `pattern:${normalizeMatchText(attrs.pattern)}` : '',
       attrs.formality ? `formality:${normalizeMatchText(attrs.formality)}` : '',
     ].filter(Boolean)
     score += itemFeatures.reduce((total, feature) => total + (preferenceScores.get(feature) || 0), 0)
-    const color = normalizeMatchText(item.color)
-    if (selected.some(chosen => color && normalizeMatchText(chosen.color) === color)) score += 0.5
+    const families = colorFamiliesFor(item)
+    score += families.reduce((total, family) => total + (colorPreferences.families.get(family) || 0) * 0.7, 0)
+    const colorRelations = selected.flatMap(chosen => colorFamiliesFor(chosen).flatMap(chosenFamily => families.map(family => ({
+      chosenFamily, family, chosenTone: colorToneFor(chosen), tone: colorToneFor(item),
+    }))))
+    if (colorRelations.length) {
+      score += colorRelations.reduce((total, pair) => total + paletteHarmonyScore(pair.chosenFamily, pair.family, pair.chosenTone, pair.tone), 0) / colorRelations.length * 1.8
+      score += colorRelations.reduce((total, pair) => total + (colorPreferences.pairs.get(colorPairKey(pair.chosenFamily, pair.family)) || 0), 0) / colorRelations.length * 1.8
+    }
     return { item, score, tie: Math.random() }
   }).sort((a, b) => b.score - a.score || a.tie - b.tie)
 
@@ -289,7 +368,7 @@ const shortlistAiCandidates = (candidates, stage, situation, selected, feedback)
 }
 const compactAiItem = item => ({
   id: String(item.id), name: item.name, category: item.category, subcategory: item.subcategory || '',
-  color: item.color || '', description: String(item.description || '').slice(0, 180),
+  color: item.color || (item.aiAttributes || item.attributes)?.color || '', description: String(item.description || '').slice(0, 180),
   attributes: Object.fromEntries(['style', 'pattern', 'formality', 'seasons', 'fit'].filter(key => (item.aiAttributes || item.attributes)?.[key] != null).map(key => [key, (item.aiAttributes || item.attributes)[key]])),
 })
 
@@ -604,7 +683,9 @@ function App() {
   const chooseRandomItems = (context = {}) => {
     const situation = outfitSituation(context)
     const styleContext = getStyleContext(situation)
-    const scoreItem = item => {
+    const colorPreferences = buildRatedColorPreferences(feedbackForAI(), situation)
+    const selected = []
+    const scoreItem = (item, withItems = selected) => {
       const attrs = item.aiAttributes || {}
       const seasons = (attrs.seasons || []).map(normalizeMatchText)
       let score = seasons.includes(normalizeMatchText(situation.season)) ? 3 : 0
@@ -618,10 +699,19 @@ function App() {
         if (['Botas', 'Botines'].includes(item.subcategory)) score += 1.5
         if (['Sandalias', 'Chanclas'].includes(item.subcategory)) score -= 2
       }
+      const families = colorFamiliesFor(item)
+      score += families.reduce((total, family) => total + (colorPreferences.families.get(family) || 0) * 0.8, 0)
+      const relations = withItems.flatMap(chosen => colorFamiliesFor(chosen).flatMap(chosenFamily => families.map(family => ({
+        chosenFamily, family, chosenTone: colorToneFor(chosen), tone: colorToneFor(item),
+      }))))
+      if (relations.length) {
+        score += relations.reduce((total, pair) => total + paletteHarmonyScore(pair.chosenFamily, pair.family, pair.chosenTone, pair.tone), 0) / relations.length * 2.2
+        score += relations.reduce((total, pair) => total + (colorPreferences.pairs.get(colorPairKey(pair.chosenFamily, pair.family)) || 0), 0) / relations.length * 2.1
+      }
       return score
     }
-    const pick = group => {
-      const ranked = shuffle(items.filter(item => item.category === group).map(item => ({ item, score: scoreItem(item) })))
+    const pick = (group, withItems = selected) => {
+      const ranked = shuffle(items.filter(item => item.category === group).map(item => ({ item, score: scoreItem(item, withItems) })))
         .sort((a, b) => b.score - a.score).slice(0, 5)
       if (!ranked.length) return undefined
       const weights = ranked.map(entry => Math.exp((entry.score - ranked[0].score) / 3))
@@ -632,22 +722,24 @@ function App() {
       }
       return ranked.at(-1).item
     }
-    const selected = []
-    const fullBody = pick('Cuerpo completo')
+    const fullBody = pick('Cuerpo completo', [])
     const hasTopAndBottom = items.some(item => item.category === 'Parte de arriba') && items.some(item => item.category === 'Parte de abajo')
     if (fullBody && (!hasTopAndBottom || Math.random() < 0.5)) selected.push(fullBody)
     else {
-      const top = pick('Parte de arriba')
-      const bottom = pick('Parte de abajo')
-      if (!top || !bottom) throw new Error('Para crear un outfit necesitas una parte de arriba y una de abajo, o una prenda de cuerpo completo.')
+      const top = pick('Parte de arriba', [])
+      if (!top) throw new Error('Para crear un outfit necesitas una parte de arriba y una de abajo, o una prenda de cuerpo completo.')
+      const bottom = pick('Parte de abajo', [top])
+      if (!bottom) throw new Error('Para crear un outfit necesitas una parte de arriba y una de abajo, o una prenda de cuerpo completo.')
       selected.push(top, bottom)
     }
-    const shoes = pick('Calzado')
+    const shoes = pick('Calzado', selected)
     if (!shoes) throw new Error('Añade al menos un calzado a tu armario para completar el outfit.')
     selected.push(shoes)
-    const bag = pick('Bolsos')
+    const bag = pick('Bolsos', selected)
     if (bag && Math.random() < 0.55) selected.push(bag)
-    const accessories = shuffle(items.filter(item => item.category === 'Accesorios'))
+    const accessories = shuffle(items.filter(item => item.category === 'Accesorios')
+      .map(item => ({ item, score: scoreItem(item, selected) })))
+      .sort((first, second) => second.score - first.score).map(entry => entry.item)
     const accessoryCounts = new Map()
     for (const accessory of accessories) {
       if (selected.length >= 9) break
@@ -662,11 +754,11 @@ function App() {
     return selected
   }
 
-  const feedbackForAI = () => feedback.map(row => ({
+  const feedbackForAI = () => feedback.slice(0, 100).map(row => ({
     occasion: row.occasion || '', mood: row.mood || '', temperatureC: row.temperature_c ?? row.temperatureC ?? null,
     season: row.season || '', rating: row.rating,
     outfit: (row.outfit_snapshot || row.outfitSnapshot || []).map(item => ({
-      name: item.name || '', category: item.category || '', subcategory: item.subcategory || '', color: item.color || '',
+      name: item.name || '', category: item.category || '', subcategory: item.subcategory || '', color: item.color || item.attributes?.color || '',
       style: item.attributes?.style || '', pattern: item.attributes?.pattern || '', formality: item.attributes?.formality || '',
       seasons: item.attributes?.seasons || [],
     })),
