@@ -494,7 +494,7 @@ function App() {
     const feedback = feedbackForAI()
     const resolveIds = data => (Array.isArray(data.itemIds) ? data.itemIds : [])
       .map(String).map(id => items.find(item => String(item.id) === id)).filter(Boolean)
-    if (inventory.length <= 100) {
+    if (inventory.length <= 50) {
       const data = await callAiEndpoint('recommend-outfit', {
         stage: 'complete', inventory, selectedItems: [],
         occasion: situation.occasion, mood: situation.mood,
@@ -549,7 +549,7 @@ function App() {
       } finally {
         setBusy(false)
         generationLockRef.current = false
-        setGenerateCooldown(20)
+        setGenerateCooldown(25)
       }
     }
     try { setCurrentLook(chooseRandomItems()) }
