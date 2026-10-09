@@ -302,6 +302,8 @@ function App() {
   const [feedLoading, setFeedLoading] = useState(false)
   const [savingFeedCardId, setSavingFeedCardId] = useState(null)
   const feedContainerRef = useRef(null)
+  const previousPageRef = useRef(page)
+  const previousFeedLengthRef = useRef(0)
   const [session, setSession] = useState(null)
   const [authReady, setAuthReady] = useState(!supabase)
   const [dataReady, setDataReady] = useState(false)
@@ -541,9 +543,17 @@ function App() {
   }, [feedback, session?.user?.id])
 
   useEffect(() => {
-    if (page === 'inspiration' && feedCards.length && window.matchMedia('(min-width: 561px)').matches) {
-      feedContainerRef.current?.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const feed = feedContainerRef.current
+    if (previousPageRef.current !== page) {
+      window.scrollTo(0, 0)
+      document.scrollingElement?.scrollTo(0, 0)
+      feed?.scrollTo(0, 0)
+    } else if (page === 'inspiration' && window.matchMedia('(min-width: 561px)').matches
+      && feed && feedCards.length > previousFeedLengthRef.current) {
+      feed.scrollTo({ top: feed.scrollHeight, behavior: 'smooth' })
     }
+    previousPageRef.current = page
+    previousFeedLengthRef.current = feedCards.length
   }, [feedCards.length, page])
 
   useEffect(() => {
