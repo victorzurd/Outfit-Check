@@ -216,7 +216,7 @@ const getStyleContext = situation => {
   return profile
 }
 const shortlistAiCandidates = (candidates, stage, situation, selected, feedback) => {
-  const limits = { base: 16, bottom: 12, footwear: 12, extras: 16 }
+  const limits = { base: 12, bottom: 9, footwear: 9, extras: 12 }
   const styleContext = getStyleContext(situation)
   const preferenceScores = new Map()
   for (const entry of feedback) {
