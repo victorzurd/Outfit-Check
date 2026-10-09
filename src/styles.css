@@ -323,3 +323,57 @@ button{ -webkit-tap-highlight-color:transparent }
   .inspiration-rating-mobile button small{display:none}
   .inspiration-item-list{display:none}
 }
+
+/* Outfit creation is its own focused destination. */
+.generator-page{max-width:1040px;margin:0 auto}
+.generator-page .look-section{margin:0}
+.generator-page .section-heading{margin-bottom:22px}
+.generator-page .section-heading .eyebrow{margin-bottom:8px}
+.generator-page .section-heading h1{margin:0 0 6px;color:#493f3d;font:500 34px/1.08 'Playfair Display',serif;letter-spacing:-.7px}
+.generator-page .section-heading p{max-width:500px;font-size:12px}
+.generator-page .builder-card{border-radius:22px;grid-template-columns:minmax(270px,.72fr) minmax(0,1.28fr);box-shadow:0 14px 44px #6348420c}
+.generator-page .builder-controls{padding:25px}
+.generator-page .look-result{border-radius:0 22px 22px 0}
+.generator-page .weather-banner{cursor:pointer}
+.generator-page .look-empty .outline-button{margin-top:5px}
+.mobile-tabbar{grid-template-columns:repeat(5,minmax(0,1fr))}
+
+@media(max-width:780px){
+  .generator-page{width:100%;max-width:620px;margin:0 auto}
+  .generator-page .builder-card{grid-template-columns:1fr}
+  .generator-page .look-result{border:0;border-top:1px solid #eee3dd;border-radius:0 0 22px 22px}
+}
+
+@media(max-width:560px){
+  .page-content:has(.generator-page){padding:18px 14px calc(94px + env(safe-area-inset-bottom))}
+  .generator-page .section-heading{margin:0 2px 14px}
+  .generator-page .section-heading .eyebrow{margin-bottom:5px;font-size:8px;letter-spacing:1.3px}
+  .generator-page .section-heading h1{font-size:28px;letter-spacing:-.5px}
+  .generator-page .section-heading p{max-width:340px;font-size:10px;line-height:1.4}
+  .generator-page .builder-card{display:flex;flex-direction:column;border:1px solid #eadfda;border-radius:21px;overflow:hidden}
+  .generator-page .builder-controls{min-height:0;gap:0;padding:14px 15px 15px;border-radius:0}
+  .generator-page .weather-banner{min-height:54px;margin-bottom:4px;padding:8px 9px;border-radius:13px}
+  .generator-page .weather-icon{width:34px;height:34px;border-radius:11px}
+  .generator-page .weather-copy b{font-size:10px}
+  .generator-page .weather-copy small{font-size:8px}
+  .generator-page .weather-privacy{margin:0 2px 11px;font-size:7px;line-height:1.35}
+  .generator-page .field-label{margin:0 0 5px;font-size:10px}
+  .generator-page .builder-select,.generator-page .builder-input{height:43px;margin-bottom:11px;border-radius:10px;font-size:13px}
+  .generator-page .generate-button{min-height:49px;margin-top:1px;border-radius:12px;font-size:12px}
+  .generator-page .look-result{min-height:0;padding:14px 13px 15px;border-top:1px solid #eee3dd;border-radius:0;background:#fbf6f2}
+  .generator-page .result-top{margin-bottom:10px}
+  .generator-page .result-label{font-size:8px}
+  .generator-page .outfit-images{grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:clamp(100px,17vh,142px);min-height:0;max-height:36vh;overflow:auto;flex:none;gap:6px}
+  .generator-page .outfit-image{min-height:0;border-radius:10px}
+  .generator-page .outfit-image span{left:4px;right:4px;bottom:4px;padding:4px 5px;font-size:7px}
+  .generator-page .outfit-copy{margin-top:9px}
+  .generator-page .outfit-copy h3{font-size:15px}
+  .generator-page .outfit-copy p{font-size:9px}
+  .generator-page .look-empty{min-height:132px;gap:7px;padding:10px}
+  .generator-page .look-empty b{font-size:15px}
+  .generator-page .look-empty span{max-width:290px;font-size:9px}
+  .generator-page .look-empty .outline-button{min-height:38px;margin-top:2px;font-size:9px}
+  .mobile-tabbar{left:7px;right:7px;grid-template-columns:repeat(5,minmax(0,1fr));min-height:62px;padding:5px 4px;border-radius:19px}
+  .mobile-tabbar button{min-height:49px;gap:3px;font-size:8px}
+  .mobile-tabbar button svg{width:18px;height:18px}
+}
