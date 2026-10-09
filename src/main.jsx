@@ -161,7 +161,7 @@ const toDataUrl = blob => new Promise((resolve, reject) => {
 const shuffle = list => [...list].sort(() => Math.random() - 0.5)
 const normalizeMatchText = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es')
 const shortlistAiCandidates = (candidates, stage, situation, selected, feedback) => {
-  const limits = { base: 8, bottom: 6, footwear: 6, extras: 8 }
+  const limits = { base: 16, bottom: 12, footwear: 12, extras: 16 }
   const preferenceScores = new Map()
   for (const entry of feedback) {
     const rating = Number(entry.rating)
@@ -494,7 +494,7 @@ function App() {
     const feedback = feedbackForAI()
     const resolveIds = data => (Array.isArray(data.itemIds) ? data.itemIds : [])
       .map(String).map(id => items.find(item => String(item.id) === id)).filter(Boolean)
-    if (inventory.length <= 30) {
+    if (inventory.length <= 100) {
       const data = await callAiEndpoint('recommend-outfit', {
         stage: 'complete', inventory, selectedItems: [],
         occasion: situation.occasion, mood: situation.mood,
