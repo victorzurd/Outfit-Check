@@ -75,7 +75,17 @@ const seasonForLatitude = (latitude, localDate = new Date()) => {
   return { Invierno: 'Verano', Verano: 'Invierno', Primavera: 'Otoño', Otoño: 'Primavera' }[northSeason]
 }
 const weatherDescription = code => code === 0 ? 'Despejado' : code <= 3 ? 'Nubes y claros' : code <= 48 ? 'Niebla' : code <= 67 ? 'Lluvia' : code <= 77 ? 'Nieve' : code <= 82 ? 'Chubascos' : code <= 99 ? 'Tormenta' : 'Tiempo actual'
-const cityFromTimezone = timezone => String(timezone || '').split('/').pop()?.replaceAll('_', ' ') || 'Ubicación actual'
+const cityFromCoordinates = async ({ latitude, longitude }) => {
+  try {
+    const params = new URLSearchParams({ latitude: String(latitude), longitude: String(longitude), localityLanguage: 'es' })
+    const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?${params}`)
+    if (!response.ok) return ''
+    const place = await response.json()
+    return String(place.city || place.locality || place.principalSubdivision || '').trim()
+  } catch {
+    return ''
+  }
+}
 const localItemsKey = 'outfit-check-wardrobe-v2'
 const localLooksKey = 'outfit-check-saved-looks-v2'
 const localFeedbackBaseKey = 'outfit-check-outfit-feedback-v1'
@@ -464,26 +474,30 @@ function App() {
     navigator.geolocation.getCurrentPosition(async ({ coords }) => {
       try {
         const params = new URLSearchParams({ latitude: String(coords.latitude), longitude: String(coords.longitude), current: 'temperature_2m,apparent_temperature,weather_code', timezone: 'auto' })
-        const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`)
+        const [response, location] = await Promise.all([
+          fetch(`https://api.open-meteo.com/v1/forecast?${params}`),
+          cityFromCoordinates(coords),
+        ])
         if (!response.ok) throw new Error('No se pudo consultar el tiempo local.')
         const result = await response.json()
         const timezone = result.timezone || ''
+        const city = location || 'Ubicación actual'
         setCurrentWeather({
           temperatureC: Math.round(result.current.temperature_2m),
           apparentTemperatureC: Math.round(result.current.apparent_temperature),
           weatherCode: result.current.weather_code,
           description: weatherDescription(result.current.weather_code),
           timezone,
-          location: cityFromTimezone(timezone),
+          location: city,
           season: seasonForLatitude(coords.latitude, result.current.time),
         })
-        flash(`Tiempo actualizado para ${cityFromTimezone(timezone)}.`)
+        flash(`Tiempo actualizado para ${city}.`)
       } catch (error) { flash(error.message || 'No se pudo consultar el tiempo local.') }
       finally { setWeatherLoading(false) }
     }, error => {
       setWeatherLoading(false)
       flash(error.code === 1 ? 'Permite la ubicación en Safari para adaptar tus outfits al tiempo local.' : 'No se pudo obtener la ubicación. Inténtalo de nuevo.')
-    }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 900000 })
+    }, { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 })
   }
 
   const outfitSituation = (context = {}) => ({
@@ -1131,7 +1145,7 @@ function App() {
             <div className="section-heading"><div><div className="eyebrow blush">EL EDITORIAL DE HOY</div><h2>¿Qué te apetece ponerte?</h2><p>Tu plan, tu mood y el tiempo de hoy inspiran el look.</p></div></div>
             <div className="builder-card"><div className="builder-controls">
               <button className={`weather-banner${currentWeather ? ' is-ready' : ''}`} onClick={enableLocalWeather} disabled={weatherLoading}><span className="weather-icon"><MapPin size={18}/></span><span className="weather-copy"><b>{weatherLoading ? 'Buscando el tiempo local…' : currentWeather ? `${currentWeather.location} · ${currentWeather.temperatureC}°` : 'Vestirse con el tiempo de hoy'}</b><small>{currentWeather ? `${currentWeather.description} · sensación ${currentWeather.apparentTemperatureC}° · ${currentWeather.season}` : 'Activa la ubicación para adaptar el look a tu ciudad'}</small></span><ArrowRight size={16}/></button>
-              <p className="weather-privacy">La ubicación precisa solo se usa al activarlo. Open-Meteo recibe las coordenadas; la IA recibe la ciudad aproximada y el tiempo local, no tu GPS.</p>
+              <p className="weather-privacy">Al activarlo, el dispositivo intenta obtener coordenadas precisas. Open-Meteo las usa para el tiempo y BigDataCloud para identificar la ciudad. La IA solo recibe la ciudad y el tiempo, no tus coordenadas.</p>
               <label className="field-label" htmlFor="occasion">Plan</label><select id="occasion" className="builder-select" value={occasion} onChange={event => setOccasion(event.target.value)}>{occasions.map(value => <option key={value}>{value}</option>)}</select>
               <label className="field-label" htmlFor="mood">Cómo quieres sentirte</label><input id="mood" className="builder-input" value={mood} onChange={event => setMood(event.target.value)} maxLength={60} placeholder="Cómoda, elegante, informal…"/>
               <button className="generate-button" disabled={!dataReady || !items.length || busy || (cloudMode && !!session?.user && generateCooldown > 0)} onClick={generateLook}><Sparkles size={17}/>{busy ? 'Pensando el outfit…' : cloudMode && session?.user && generateCooldown > 0 ? `Disponible en ${generateCooldown}s` : currentLook.length ? 'Probar otra combinación' : cloudMode ? 'Crear outfit con IA' : 'Crear una combinación'}</button>
