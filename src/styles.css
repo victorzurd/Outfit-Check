@@ -281,3 +281,28 @@ button{ -webkit-tap-highlight-color:transparent }
   .mobile-tabbar{left:8px;right:8px;padding-right:4px;padding-left:4px}
   .mobile-tabbar button{font-size:8px}
 }
+
+/* Swipe through one garment at a time and keep a clear photo position marker. */
+.inspiration-photo-carousel{position:absolute;inset:0;overflow:hidden}
+.inspiration-photo-track{position:absolute;inset:0;display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.inspiration-photo-track::-webkit-scrollbar{display:none}
+.inspiration-photo-track>.inspiration-photo{flex:0 0 100%;width:100%;height:100%;scroll-snap-align:start;scroll-snap-stop:always;border-radius:0}
+.inspiration-photo-track>.inspiration-photo img{object-fit:contain;padding:clamp(14px,3vw,34px)}
+.photo-pagination{position:absolute;z-index:4;left:15px;bottom:15px;min-height:32px;display:flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid #ffffff70;border-radius:999px;background:#33292bb8;color:white;box-shadow:0 4px 14px #271e1d22;backdrop-filter:blur(12px);font-size:10px;font-variant-numeric:tabular-nums}
+.photo-current{font-weight:700;color:#fff}
+.photo-divider,.photo-total{color:#f1e5e2b8}
+.photo-progress{display:flex;align-items:center;gap:3px;margin-left:4px}
+.photo-progress i{width:4px;height:4px;border-radius:99px;background:#ffffff76;transition:width .2s,background .2s}
+.photo-progress i.active{width:15px;background:#fff}
+
+@media(max-width:560px){
+  .inspiration-photo-carousel{position:absolute;inset:0}
+  .inspiration-photo-track{inset:0;padding:calc(58px + env(safe-area-inset-top)) clamp(10px,3vw,20px) clamp(38px,5vh,46px);touch-action:pan-x pan-y}
+  .inspiration-photo-track>.inspiration-photo{flex-basis:100%;width:100%;height:100%;flex-shrink:0;border-radius:clamp(10px,3vw,17px);background:#f1e8e3;box-shadow:0 2px 12px #543b320d}
+  .inspiration-photo-track>.inspiration-photo img{padding:clamp(7px,2.5vw,13px);background:#f1e8e3}
+  .inspiration-photo-track>.inspiration-photo span{left:8px;right:8px;bottom:8px;max-width:calc(100% - 16px);padding:6px 9px;font-size:clamp(8px,2.4vw,10px)}
+  .photo-pagination{left:50%;bottom:8px;min-height:28px;gap:4px;padding:4px 9px;transform:translateX(-50%);font-size:9px}
+  .photo-progress{gap:3px;margin-left:3px}
+  .photo-progress i{width:4px;height:4px}
+  .photo-progress i.active{width:13px}
+}
