@@ -453,3 +453,17 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .top-login:hover{transform:translateY(-1px);background:linear-gradient(135deg,#78434f,#512e3d);box-shadow:0 8px 18px #6239452c}
 .top-login svg{width:15px;height:15px;color:#e8d2ad}
 @media(max-width:780px){.top-login{display:none}}
+@media(max-width:560px){
+  .inspiration-card-media{flex-basis:68%;height:68%}
+  .inspiration-card-copy{flex-basis:32%;max-height:32%;padding:8px clamp(14px,4vw,22px) calc(8px + env(safe-area-inset-bottom))}
+  .inspiration-context{margin-bottom:5px}
+  .inspiration-card-copy>.eyebrow{margin-bottom:2px}
+  .inspiration-card-copy h2{margin-bottom:3px;font-size:clamp(18px,5.3vw,23px)}
+  .inspiration-reason{margin-bottom:5px;-webkit-line-clamp:1}
+  .inspiration-card-copy .inspiration-rating-mobile{margin-bottom:0}
+  .inspiration-rating-mobile button{width:27px;height:27px}
+  .inspiration-card-footer{padding-top:4px}
+  .inspiration-card-actions{width:auto;gap:0}
+  .inspiration-card-actions .text-action:nth-child(2){display:none}
+  .inspiration-card-actions .text-action{min-height:32px;padding:0 12px}
+}
