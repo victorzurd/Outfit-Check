@@ -60,6 +60,7 @@ Al iniciar sesión con correo y contraseña, la app intenta sincronizar los dato
 
 ### Datos de ejemplo y borrado
 
+- **Cuenta demo:** correo `demooutfitcheck@gmail.com`; contraseña `admin1234`. Comparte estas credenciales solo para probar la web. Cualquier persona que inicie sesión podrá modificar o borrar los datos de esta cuenta; no guardes información personal ni reutilices esta contraseña en otros servicios.
 - Para cargar un armario de prueba, ejecuta [`seed-wardrobe-30.sql`](supabase/seed-wardrobe-30.sql). Puedes ampliarlo con [`seed-wardrobe-100.sql`](supabase/seed-wardrobe-100.sql). En ambos archivos sustituye `tu_correo@ejemplo.com` por el correo de la cuenta. Son prendas ficticias, sin fotos.
 - Para borrar prendas, looks y valoraciones de una cuenta concreta, revisa [`reset-user-data.sql`](supabase/reset-user-data.sql), sustituye el correo de ejemplo y ejecútalo conscientemente. No elimina la cuenta. Las fotos del bucket deben borrarse aparte desde Storage.
 
